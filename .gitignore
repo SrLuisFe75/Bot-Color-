@@ -1,0 +1,21 @@
+# Environments
+.env
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Data and persistence
+/data/
+*.db
+*.sqlite
+*.sqlite3
+*.pkl
+
+# OS
+.DS_Store
+Thumbs.db
