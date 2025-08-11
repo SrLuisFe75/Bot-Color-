@@ -3,10 +3,13 @@ from __future__ import annotations
 import os
 from pydantic import BaseModel, Field, ValidationError
 from dotenv import load_dotenv
+from .crypto_utils import decrypt_secret
 
 
 class BotSettings(BaseModel):
-    bot_token: str = Field(..., alias="BOT_TOKEN")
+    bot_token: str | None = Field(default=None, alias="BOT_TOKEN")
+    bot_token_enc: str | None = Field(default=None, alias="BOT_TOKEN_ENC")
+    decrypt_password: str | None = Field(default=None, alias="DECRYPT_PASSWORD")
     use_uvloop: bool = Field(default=False, alias="USE_UVLOOP")
     persistence_path: str = Field(default="data/persistence.pkl", alias="PERSISTENCE_PATH")
 
