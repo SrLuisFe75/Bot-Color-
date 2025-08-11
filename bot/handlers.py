@@ -310,9 +310,14 @@ Cómo usar el bot:
 
         if data.startswith("mix_prompt:"):
             code = data.split(":", 1)[1]
-            await query.message.reply_text(
-                f"Escribe ahora /mix {code} <otro_código> para mezclar."
-            )
+            # Activate guided mix flow: set first code and open palette for second
+            context.user_data["mix_mode"] = True
+            context.user_data["mix_first"] = code
+            context.user_data["palette_brand"] = "all"
+            context.user_data["palette_page"] = 0
+            await query.message.reply_text(f"Primero seleccionado: {code}. Ahora elige el segundo desde la paleta.")
+            # Show palette page
+            await self.send_palette_page(query, context)
             return
 
         if data.startswith("mix_ratio:"):
