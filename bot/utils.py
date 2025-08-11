@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, Tuple
+from typing import Dict, Tuple, List
 from PIL import Image, ImageDraw, ImageFont
 
 
@@ -87,5 +87,47 @@ def generate_color_preview_image(left_hex: str, right_hex: str | None = None, si
         draw.rectangle([width // 2, 0, width, height], fill=right_rgb)
     else:
         draw.rectangle([0, 0, width, height], fill=ColorMixingUtils.hex_to_rgb(left_hex))
+
+    return image
+
+
+def generate_palette_image(entries: List[Dict], page: int, page_size: int = 8, columns: int = 4) -> Image.Image:
+    # 4x2 grid by default
+    rows = max(1, (page_size + columns - 1) // columns)
+    cell_w, cell_h = 320, 240
+    padding = 8
+    width = columns * cell_w + (columns + 1) * padding
+    height = rows * cell_h + (rows + 1) * padding + 40  # extra space for title
+
+    image = Image.new("RGB", (width, height), (245, 245, 245))
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default()
+
+    # Title
+    title = f"PALETA - Página {page + 1}"
+    draw.text((padding, padding), title, fill=(20, 20, 20), font=font)
+
+    start = page * page_size
+    end = start + page_size
+    subset = entries[start:end]
+
+    for idx, entry in enumerate(subset):
+        r = idx // columns
+        c = idx % columns
+        x0 = padding + c * (cell_w + padding)
+        y0 = padding + 40 + r * (cell_h + padding)
+        x1 = x0 + cell_w
+        y1 = y0 + cell_h
+
+        hex_color = str(entry.get("hex", "#cccccc"))
+        rgb = ColorMixingUtils.hex_to_rgb(hex_color)
+        draw.rectangle([x0, y0, x1, y1], fill=rgb)
+
+        # Overlay code + brand + name with a semi-transparent band
+        band_h = 36
+        band_y0 = y1 - band_h
+        draw.rectangle([x0, band_y0, x1, y1], fill=(0, 0, 0, 128))
+        text = f"{entry.get('brand','')} {entry.get('code','')}"
+        draw.text((x0 + 8, band_y0 + 4), text, fill=(255, 255, 255), font=font)
 
     return image

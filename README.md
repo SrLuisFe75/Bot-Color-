@@ -18,6 +18,13 @@ Bot de Telegram para buscar y mezclar colores profesionales de cabello (Igora, W
   make run        # inicia el bot
   ```
 
+## Interfaz intuitiva para estilistas
+- Menú principal con botones: Paleta, Buscar, Mezclar, Favoritos, Simular, Ayuda
+- Paleta de colores (`/palette`):
+  - Elige marca o “Todas”
+  - Vista de paleta con 8 muestras por página (imagen 4x2) con botones por color
+  - Navegación ⬅️ ➡️ y “Modo mezcla” para elegir dos colores desde la paleta
+
 ## Cómo proteger tu token (recomendado)
 Puedes almacenar el token cifrado con una contraseña. El bot descifra en runtime.
 
@@ -54,9 +61,8 @@ DECRYPT_PASSWORD=...
   ```
 
 ## Comandos
-- `/start` – Bienvenida
-- `/help` – Ayuda
-- `/brands` – Marcas disponibles
+- `/start` – Menú de acceso rápido
+- `/palette` – Paleta por marca con navegación y modo mezcla
 - `/search <término>` – Buscar tonos
 - `/mix <code1> <code2>` – Mezclar colores con cálculo profesional
 - `/favorites` – Ver y limpiar favoritos
@@ -66,5 +72,4 @@ DECRYPT_PASSWORD=...
 Se usa `PicklePersistence` en `data/persistence.pkl` para guardar favoritos por usuario.
 
 ## Notas
-- El archivo antiguo `Color Bot` se ha reemplazado por una estructura de paquete Python bajo `bot/`.
 - Puedes ampliar la base de datos en `bot/database.py` o cargar desde JSON. 
