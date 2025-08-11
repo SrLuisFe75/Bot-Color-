@@ -20,12 +20,21 @@ class BotSettings(BaseModel):
 def load_settings() -> BotSettings:
     # Load environment variables from .env if present
     load_dotenv(override=False)
-    try:
-        return BotSettings(**os.environ)
-    except ValidationError as exc:
-        missing = []
-        for err in exc.errors():
-            if err.get("type") == "missing":
-                missing.append(err.get("loc", [""])[0])
-        missing_str = ", ".join(missing) if missing else "unknown"
-        raise RuntimeError(f"Missing required configuration: {missing_str}. Copy .env.example to .env and set values.") from exc
+
+    settings = BotSettings(**os.environ)
+
+    # Resolve token
+    if not settings.bot_token:
+        if settings.bot_token_enc and settings.decrypt_password:
+            try:
+                token = decrypt_secret(settings.bot_token_enc, settings.decrypt_password)
+                settings.bot_token = token
+            except Exception as exc:  # pragma: no cover
+                raise RuntimeError("No se pudo descifrar BOT_TOKEN_ENC. Verifica la contraseña.") from exc
+
+    if not settings.bot_token:
+        raise RuntimeError(
+            "No hay token configurado. Usa BOT_TOKEN o BOT_TOKEN_ENC + DECRYPT_PASSWORD en el entorno/.env"
+        )
+
+    return settings

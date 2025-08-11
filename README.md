@@ -12,7 +12,22 @@ Bot de Telegram para buscar y mezclar colores profesionales de cabello (Igora, W
    python -m venv .venv && source .venv/bin/activate
    pip install -r requirements.txt
    ```
-2. Copiar `.env.example` a `.env` y completar el `BOT_TOKEN`.
+2. Copiar `.env.example` a `.env` y completar la configuración.
+
+## Cómo proteger tu token (recomendado)
+Puedes almacenar el token cifrado con una contraseña. El bot descifra en runtime.
+
+1) Generar el cifrado:
+```bash
+python -m scripts.seal_token <TU_TOKEN> <TU_CONTRASEÑA>
+```
+Esto imprimirá dos líneas para pegar en `.env`:
+```
+BOT_TOKEN_ENC=...
+DECRYPT_PASSWORD=...
+```
+2) Asegúrate de NO commitear `.env` (ya está en `.gitignore`).
+3) Alternativamente, puedes usar `BOT_TOKEN` en claro en `.env`, pero no es recomendable.
 
 ## Ejecutar
 - Validar configuración sin iniciar el bot:
