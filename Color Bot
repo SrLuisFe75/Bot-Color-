@@ -1,0 +1,295 @@
+await update.message.reply_photo(
+            photo=color_image,
+            caption=info_text,
+            reply_markup=reply_markup
+        )
+
+    async def handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle photo uploads for color simulation"""
+        await update.message.reply_text(
+            "📸 ¡Genial! Has subido una foto. \n\n"
+            "🚧 **Función de simulación en desarrollo** 🚧\n\n"
+            "Por ahora puedes:\n"
+            "• `/search <color>` - Buscar colores\n"
+            "• `/mix <color1> <color2>` - Mezclar colores\n\n"
+            "💜 ¡Pronto podrás ver cómo te quedaría cualquier color!"
+        )
+
+    async def save_mix_to_favorites(self, query, color1_code: str, color2_code: str):
+        """Save a color mix to user's favorites"""
+        user_id = query.from_user.id
+        
+        if user_id not in self.user_favorites:
+            self.user_favorites[user_id] = []
+        
+        mix_data = {
+            'color1': color1_code,
+            'color2': color2_code,
+            'timestamp': str(query.message.date),
+            'type': 'mix'
+        }
+        
+        self.user_favorites[user_id].append(mix_data)
+        
+        await query.message.reply_text(
+            f"💖 **¡Guardado en favoritos!**\n\n"
+            f"Mezcla: `{color1_code}` + `{color2_code}`\n"
+            f"✨ Usa `/favorites` para ver todas tus mezclas guardadas"
+        )
+
+    async def favorites_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show user's favorite colors and mixes"""
+        user_id = update.effective_user.id
+        
+        if user_id not in self.user_favorites or not self.user_favorites[user_id]:
+            await update.message.reply_text(
+                "💔 **No tienes favoritos guardados aún**\n\n"
+                "💡 **Para guardar favoritos:**\n"
+                "• Busca un color y presiona 💖\n"
+                "• Haz una mezcla y guárdala\n"
+                "• Usa `/mix` para crear mezclas geniales"
+            )
+            return
+        
+        favorites = self.user_favorites[user_id]
+        
+        favorites_text = f"💖 **TUS FAVORITOS** ({len(favorites)} guardados)\n\n"
+        
+        for i, fav in enumerate(favorites[-10:], 1):  # Show last 10
+            if fav['type'] == 'mix':
+                favorites_text += f"**{i}.** 🎭 Mezcla: `{fav['color1']}` + `{fav['color2']}`\n"
+            else:
+                favorites_text += f"**{i}.** 🎨 Color: `{fav.get('code', 'N/A')}`\n"
+        
+        keyboard = [
+            [InlineKeyboardButton("🗑️ Limpiar Favoritos", callback_data="clear_favorites")],
+            [InlineKeyboardButton("🎭 Nueva Mezcla", callback_data="mix_colors")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(favorites_text, reply_markup=reply_markup)
+
+    async def simulate_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Color simulation command (placeholder)"""
+        await update.message.reply_text(
+            "📸 **SIMULADOR DE COLOR** 🚧\n\n"
+            "**¡Próximamente!** Podrás:\n\n"
+            "1️⃣ Subir tu foto\n"
+            "2️⃣ Elegir un color profesional\n"
+            "3️⃣ Ver el resultado antes de aplicar\n\n"
+            "💜 Por ahora puedes usar:\n"
+            "• `/mix` - Mezclar colores\n"
+            "• `/search` - Buscar tonos\n"
+            "• `/brands` - Ver marcas profesionales\n\n"
+            "🔔 ¡Te avisaremos cuando esté listo!"
+        )
+
+    def run(self):
+        """Run the bot"""
+        print("🤖 Iniciando Hair Color Mixing Bot...")
+        print("💜 Bot creado especialmente para tu hija!")
+        self.app.run_polling()
+
+# Bot configuration and startup
+def create_hair_color_bot():
+    """Create and configure the hair color bot"""
+    
+    # IMPORTANT: Replace with your actual bot token from @BotFather
+    BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
+    
+    if BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
+        print("❌ ERROR: Por favor configura tu BOT_TOKEN")
+        print("📋 Pasos para obtener el token:")
+        print("1. Abre Telegram y busca @BotFather")
+        print("2. Envía /newbot")
+        print("3. Sigue las instrucciones")
+        print("4. Copia el token y reemplázalo en BOT_TOKEN")
+        return None
+    
+    # Create bot instance
+    bot = HairColorBot(BOT_TOKEN)
+    
+    print("✅ Bot configurado correctamente!")
+    print("🎨 Funcionalidades disponibles:")
+    print("   • Búsqueda de colores profesionales")
+    print("   • Mezclas de colores con cálculos")
+    print("   • Base de datos de Igora, Wella, L'Oréal")
+    print("   • Favoritos personalizados")
+    print("   • Imágenes de preview de colores")
+    print("   • Recomendaciones profesionales")
+    
+    return bot
+
+# Additional utility functions for the bot
+class ColorMixingUtils:
+    """Utility functions for color mixing calculations"""
+    
+    @staticmethod
+    def hex_to_rgb(hex_color: str) -> tuple:
+        """Convert hex color to RGB"""
+        hex_color = hex_color.lstrip('#')
+        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+    
+    @staticmethod
+    def rgb_to_hex(rgb: tuple) -> str:
+        """Convert RGB to hex color"""
+        return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+    
+    @staticmethod
+    def calculate_professional_mix(color1: Dict, color2: Dict) -> Dict:
+        """Professional color mixing calculations"""
+        
+        # Level mixing (hair color science)
+        level1, level2 = color1['level'], color2['level']
+        
+        if abs(level1 - level2) <= 1:
+            # Same level mixing
+            result_level = (level1 + level2) / 2
+            mixing_ratio = "1:1"
+            developer_vol = 30 if result_level >= 7 else 20
+        elif level1 > level2:
+            # Lightening mix
+            result_level = level1 - 0.5
+            mixing_ratio = "2:1 (más del color claro)"
+            developer_vol = 30
+        else:
+            # Darkening mix
+            result_level = level2 - 0.5
+            mixing_ratio = "1:2 (más del color oscuro)"
+            developer_vol = 20
+        
+        # Processing time based on target level
+        if result_level >= 8:
+            processing_time = "35-40 minutos"
+        elif result_level >= 6:
+            processing_time = "30-35 minutos"
+        else:
+            processing_time = "25-30 minutos"
+        
+        # Professional recommendations
+        recommendations = []
+        
+        if result_level >= 8:
+            recommendations.append("Requiere decoloración previa")
+        if 'ash' in color1['name'].lower() or 'ash' in color2['name'].lower():
+            recommendations.append("Neutralizará tonos amarillos")
+        if 'copper' in color1['name'].lower() or 'copper' in color2['name'].lower():
+            recommendations.append("Resultado con reflejos cobrizos intensos")
+        
+        return {
+            'result_level': round(result_level, 1),
+            'mixing_ratio': mixing_ratio,
+            'developer_volume': developer_vol,
+            'processing_time': processing_time,
+            'recommendations': recommendations,
+            'color_family': ColorMixingUtils.determine_color_family(color1, color2)
+        }
+    
+    @staticmethod
+    def determine_color_family(color1: Dict, color2: Dict) -> str:
+        """Determine the resulting color family"""
+        names = (color1['name'] + ' ' + color2['name']).lower()
+        
+        if 'copper' in names or 'red' in names:
+            return "Cobrizo/Rojizo"
+        elif 'ash' in names or 'grey' in names:
+            return "Ceniza"
+        elif 'gold' in names or 'honey' in names:
+            return "Dorado"
+        elif 'blonde' in names:
+            return "Rubio"
+        elif 'brown' in names:
+            return "Castaño"
+        else:
+            return "Mixto"
+
+# Enhanced database loader
+def load_complete_hair_database():
+    """Load complete professional hair color database"""
+    
+    # This would load from your generated JSON file
+    # For demo purposes, here's an extended database
+    
+    complete_db = {
+        "igora_royal": [
+            {"code": "1-00", "name": "Natural Black", "brand": "Schwarzkopf", "level": 1, "hex": "#000000"},
+            {"code": "2-00", "name": "Natural Brown Black", "brand": "Schwarzkopf", "level": 2, "hex": "#2F1B14"},
+            {"code": "3-00", "name": "Natural Dark Brown", "brand": "Schwarzkopf", "level": 3, "hex": "#654321"},
+            {"code": "4-00", "name": "Natural Medium Brown", "brand": "Schwarzkopf", "level": 4, "hex": "#8B4513"},
+            {"code": "5-00", "name": "Natural Light Brown", "brand": "Schwarzkopf", "level": 5, "hex": "#A0522D"},
+            {"code": "6-00", "name": "Natural Dark Blonde", "brand": "Schwarzkopf", "level": 6, "hex": "#CD853F"},
+            {"code": "7-00", "name": "Natural Medium Blonde", "brand": "Schwarzkopf", "level": 7, "hex": "#DAA520"},
+            {"code": "8-00", "name": "Natural Light Blonde", "brand": "Schwarzkopf", "level": 8, "hex": "#F0E68C"},
+            {"code": "9-00", "name": "Natural Extra Light Blonde", "brand": "Schwarzkopf", "level": 9, "hex": "#F5E6A3"},
+            {"code": "10-00", "name": "Natural Ultra Light Blonde", "brand": "Schwarzkopf", "level": 10, "hex": "#FFF8DC"},
+            # Ash series
+            {"code": "6-1", "name": "Dark Blonde Ash", "brand": "Schwarzkopf", "level": 6, "hex": "#C0C0C0"},
+            {"code": "7-1", "name": "Medium Blonde Ash", "brand": "Schwarzkopf", "level": 7, "hex": "#D3D3D3"},
+            {"code": "8-1", "name": "Light Blonde Ash", "brand": "Schwarzkopf", "level": 8, "hex": "#E5E5E5"},
+            {"code": "9-1", "name": "Extra Light Blonde Ash", "brand": "Schwarzkopf", "level": 9, "hex": "#F0F0F0"},
+            # Copper series
+            {"code": "6-77", "name": "Dark Blonde Copper Extra", "brand": "Schwarzkopf", "level": 6, "hex": "#B87333"},
+            {"code": "7-77", "name": "Medium Blonde Copper Extra", "brand": "Schwarzkopf", "level": 7, "hex": "#CD7F32"},
+            {"code": "8-77", "name": "Light Blonde Copper Extra", "brand": "Schwarzkopf", "level": 8, "hex": "#DAA520"},
+            # Gold series
+            {"code": "6-5", "name": "Dark Blonde Gold", "brand": "Schwarzkopf", "level": 6, "hex": "#FFD700"},
+            {"code": "7-5", "name": "Medium Blonde Gold", "brand": "Schwarzkopf", "level": 7, "hex": "#FFF700"},
+            {"code": "8-5", "name": "Light Blonde Gold", "brand": "Schwarzkopf", "level": 8, "hex": "#FFFF99"},
+        ],
+        
+        "wella_color_touch": [
+            {"code": "5/37", "name": "Light Brown Gold Brown", "brand": "Wella", "level": 5, "hex": "#8B4513"},
+            {"code": "6/37", "name": "Dark Blonde Gold Brown", "brand": "Wella", "level": 6, "hex": "#CD853F"},
+            {"code": "6/43", "name": "Dark Blonde Red Gold", "brand": "Wella", "level": 6, "hex": "#B8860B"},
+            {"code": "7/43", "name": "Medium Blonde Red Gold", "brand": "Wella", "level": 7, "hex": "#DAA520"},
+            {"code": "8/43", "name": "Light Blonde Red Gold", "brand": "Wella", "level": 8, "hex": "#F0E68C"},
+            {"code": "6/1", "name": "Dark Blonde Ash", "brand": "Wella", "level": 6, "hex": "#C0C0C0"},
+            {"code": "7/1", "name": "Medium Blonde Ash", "brand": "Wella", "level": 7, "hex": "#D3D3D3"},
+            {"code": "8/1", "name": "Light Blonde Ash", "brand": "Wella", "level": 8, "hex": "#E6E6FA"},
+            {"code": "9/1", "name": "Very Light Blonde Ash", "brand": "Wella", "level": 9, "hex": "#F0F8FF"},
+            {"code": "10/6", "name": "Lightest Blonde Violet", "brand": "Wella", "level": 10, "hex": "#DDA0DD"},
+        ],
+        
+        "loreal_majirel": [
+            {"code": "5.3", "name": "Light Golden Brown", "brand": "L'Oréal", "level": 5, "hex": "#B8860B"},
+            {"code": "6.3", "name": "Dark Golden Blonde", "brand": "L'Oréal", "level": 6, "hex": "#DAA520"},
+            {"code": "7.3", "name": "Golden Blonde", "brand": "L'Oréal", "level": 7, "hex": "#FFD700"},
+            {"code": "8.3", "name": "Light Golden Blonde", "brand": "L'Oréal", "level": 8, "hex": "#FFEF94"},
+            {"code": "7.1", "name": "Ash Blonde", "brand": "L'Oréal", "level": 7, "hex": "#D3D3D3"},
+            {"code": "8.1", "name": "Light Ash Blonde", "brand": "L'Oréal", "level": 8, "hex": "#E6E6FA"},
+            {"code": "9.1", "name": "Very Light Ash Blonde", "brand": "L'Oréal", "level": 9, "hex": "#F0F8FF"},
+            {"code": "6.35", "name": "Dark Golden Mahogany Blonde", "brand": "L'Oréal", "level": 6, "hex": "#CD853F"},
+        ]
+    }
+    
+    return complete_db
+
+# Main execution
+if __name__ == "__main__":
+    print("🎨 HAIR COLOR MIXING TELEGRAM BOT 💜")
+    print("=" * 50)
+    print("👧 Creado especialmente para tu hija!")
+    print()
+    
+    # Create and run the bot
+    bot = create_hair_color_bot()
+    
+    if bot:
+        print("🚀 Iniciando el bot...")
+        print("💜 ¡Tu hija ya puede empezar a mezclar colores!")
+        print()
+        print("📋 COMANDOS DISPONIBLES:")
+        print("  /start - Bienvenida")
+        print("  /mix <color1> <color2> - Mezclar colores")
+        print("  /search <término> - Buscar colores")
+        print("  /brands - Ver marcas disponibles")
+        print("  /favorites - Ver favoritos")
+        print("  /help - Ayuda completa")
+        print()
+        print("✨ ¡Que disfrute experimentando con colores!")
+        
+        # Run the bot
+        bot.run()
+    else:
+        print("❌ Error: No se pudo inicializar el bot")
+        print("💡 Verifica que hayas configurado el BOT_TOKEN correctamente")
