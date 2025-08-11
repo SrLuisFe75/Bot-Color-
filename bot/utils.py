@@ -15,6 +15,16 @@ class ColorMixingUtils:
         return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
 
     @staticmethod
+    def mix_hex_colors(hex1: str, hex2: str, weight1: float, weight2: float) -> str:
+        r1, g1, b1 = ColorMixingUtils.hex_to_rgb(hex1)
+        r2, g2, b2 = ColorMixingUtils.hex_to_rgb(hex2)
+        total = max(1e-9, weight1 + weight2)
+        r = int((r1 * weight1 + r2 * weight2) / total)
+        g = int((g1 * weight1 + g2 * weight2) / total)
+        b = int((b1 * weight1 + b2 * weight2) / total)
+        return ColorMixingUtils.rgb_to_hex((r, g, b))
+
+    @staticmethod
     def calculate_professional_mix(color1: Dict, color2: Dict) -> Dict:
         level1, level2 = int(color1['level']), int(color2['level'])
 
@@ -129,5 +139,27 @@ def generate_palette_image(entries: List[Dict], page: int, page_size: int = 8, c
         draw.rectangle([x0, band_y0, x1, y1], fill=(0, 0, 0, 128))
         text = f"{entry.get('brand','')} {entry.get('code','')}"
         draw.text((x0 + 8, band_y0 + 4), text, fill=(255, 255, 255), font=font)
+
+    return image
+
+
+def generate_mix_composite_image(hex1: str, hex2: str, mixed_hex: str, size=(900, 300)) -> Image.Image:
+    width, height = size
+    image = Image.new("RGB", size, (255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default()
+
+    third = width // 3
+    # Left input color
+    draw.rectangle([0, 0, third, height], fill=ColorMixingUtils.hex_to_rgb(hex1))
+    # Right input color
+    draw.rectangle([third, 0, 2 * third, height], fill=ColorMixingUtils.hex_to_rgb(hex2))
+    # Mixed result
+    draw.rectangle([2 * third, 0, width, height], fill=ColorMixingUtils.hex_to_rgb(mixed_hex))
+
+    # Labels
+    draw.text((8, 8), f"A {hex1}", fill=(0, 0, 0), font=font)
+    draw.text((third + 8, 8), f"B {hex2}", fill=(0, 0, 0), font=font)
+    draw.text((2 * third + 8, 8), f"Mix {mixed_hex}", fill=(0, 0, 0), font=font)
 
     return image

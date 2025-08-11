@@ -27,7 +27,7 @@ from telegram.ext import (
 
 from .config import load_settings
 from .database import load_complete_hair_database, list_brands, search_colors, lookup_color_by_code
-from .utils import ColorMixingUtils, generate_color_preview_image, generate_palette_image
+from .utils import ColorMixingUtils, generate_color_preview_image, generate_palette_image, generate_mix_composite_image
 
 
 LOGGER = logging.getLogger(__name__)
@@ -256,10 +256,16 @@ Cómo usar el bot:
                     code2 = code
                     # Reset
                     context.user_data["mix_first"] = None
-                    # Send mix result
-                    fake_update = Update(update.update_id, message=query.message)  # type: ignore[arg-type]
-                    context.args = [code1, code2]  # type: ignore[attr-defined]
-                    await self.mix_command(fake_update, context)
+                    # Prompt for ratio
+                    keyboard = [[
+                        InlineKeyboardButton("1:1", callback_data=f"mix_ratio:{code1}|{code2}|1|1"),
+                        InlineKeyboardButton("2:1", callback_data=f"mix_ratio:{code1}|{code2}|2|1"),
+                        InlineKeyboardButton("1:2", callback_data=f"mix_ratio:{code1}|{code2}|1|2"),
+                    ],[
+                        InlineKeyboardButton("3:1", callback_data=f"mix_ratio:{code1}|{code2}|3|1"),
+                        InlineKeyboardButton("1:3", callback_data=f"mix_ratio:{code1}|{code2}|1|3"),
+                    ]]
+                    await query.message.reply_text("Elige proporción de mezcla:", reply_markup=InlineKeyboardMarkup(keyboard))
                 return
             else:
                 entry = lookup_color_by_code(self.db, code)
@@ -307,6 +313,12 @@ Cómo usar el bot:
             await query.message.reply_text(
                 f"Escribe ahora /mix {code} <otro_código> para mezclar."
             )
+            return
+
+        if data.startswith("mix_ratio:"):
+            payload = data.split(":", 1)[1]
+            c1, c2, w1, w2 = payload.split("|")
+            await self.send_guided_mix(query, context, c1, c2, float(w1), float(w2))
             return
 
         if data == "clear_favorites":
@@ -395,6 +407,47 @@ Cómo usar el bot:
             [InlineKeyboardButton("💖 Guardar mezcla", callback_data=f"save_mix:{col1['code']}|{col2['code']}")]
         ]
         await update.message.reply_photo(photo=bio, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def send_guided_mix(self, query, context: ContextTypes.DEFAULT_TYPE, code1: str, code2: str, w1: float, w2: float) -> None:
+        col1 = lookup_color_by_code(self.db, code1)
+        col2 = lookup_color_by_code(self.db, code2)
+        if not col1 or not col2:
+            await query.message.reply_text("No se encontraron uno o ambos códigos.")
+            return
+
+        # Calculate professional guidance
+        details = ColorMixingUtils.calculate_professional_mix(col1, col2)
+        # Visual mix preview based on selected ratio
+        hex1 = str(col1['hex'])
+        hex2 = str(col2['hex'])
+        mixed_hex = ColorMixingUtils.mix_hex_colors(hex1, hex2, w1, w2)
+        img = generate_mix_composite_image(hex1, hex2, mixed_hex)
+        bio = self.image_to_bytes(img)
+
+        # Default total volume suggestion
+        total_ml = 60  # typical tube mix size reference
+        ml1 = round(total_ml * (w1 / (w1 + w2)))
+        ml2 = total_ml - ml1
+
+        caption = (
+            f"🎭 Mezcla guiada: {col1['code']} (A) + {col2['code']} (B)\n"
+            f"Proporción elegida: {int(w1)}:{int(w2)}\n"
+            f"Sugerencia: {ml1} ml de A + {ml2} ml de B\n"
+            f"Peróxido recomendado: {details['developer_volume']} vol\n"
+            f"Tiempo: {details['processing_time']}\n"
+            f"Familia: {details['color_family']}\n"
+        )
+        tips = [
+            "Mezcla primero los tintes hasta homogeneizar antes de añadir peróxido",
+            "Usa balanza o jeringa para precisión en ml",
+            "Haz prueba de mechón si dudas del resultado",
+        ]
+        caption += "\n" + "\n".join(f"• {t}" for t in tips)
+
+        keyboard = [
+            [InlineKeyboardButton("💖 Guardar mezcla", callback_data=f"save_mix:{col1['code']}|{col2['code']}")]
+        ]
+        await query.message.reply_photo(photo=bio, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard))
 
     def run(self) -> None:
         LOGGER.info("Iniciando Hair Color Mixing Bot...")
