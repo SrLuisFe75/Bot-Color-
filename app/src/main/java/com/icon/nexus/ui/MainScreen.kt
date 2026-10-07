@@ -45,6 +45,7 @@ fun MainScreen(viewModel: MainViewModel) {
     val transcriptVisible by viewModel.transcriptVisible.collectAsStateWithLifecycle()
     val userLine by viewModel.userLine.collectAsStateWithLifecycle()
     val iconLine by viewModel.iconLine.collectAsStateWithLifecycle()
+    val audioLevel by viewModel.audioLevel.collectAsStateWithLifecycle()
     val demoMode by viewModel.demoMode.collectAsStateWithLifecycle()
     val transcriptStartsVisible by viewModel.transcriptStartsVisible.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
@@ -62,6 +63,7 @@ fun MainScreen(viewModel: MainViewModel) {
     ) {
         IconPresence(
             state = state,
+            audioLevel = audioLevel,
             modifier = Modifier.fillMaxSize(),
         )
         if (chromeVisible) {
@@ -87,7 +89,7 @@ fun MainScreen(viewModel: MainViewModel) {
                 )
                 MicControl(
                     onClick = viewModel::onMicClicked,
-                    onLongClick = viewModel::onUserInterrupt,
+                    onLongClick = viewModel::onMicLongPress,
                     modifier = Modifier.padding(top = 18.dp),
                 )
                 Row(

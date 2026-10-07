@@ -25,6 +25,7 @@ import kotlin.math.sin
 @Composable
 fun IconPresence(
     state: AppState,
+    audioLevel: Float,
     modifier: Modifier = Modifier,
 ) {
     val style = presenceStyleFor(state)
@@ -49,7 +50,13 @@ fun IconPresence(
         val t = phase.value
         val wave = sin(t * TAU)
         val breath = (wave + 1f) * 0.5f
-        val scale = style.scaleMin + (style.scaleMax - style.scaleMin) * breath
+        val level = audioLevel.coerceIn(0f, 1f)
+        val voice = state is AppState.Speaking && level >= VOICE_FLOOR
+        val scale = if (voice) {
+            0.90f + 0.24f * level
+        } else {
+            style.scaleMin + (style.scaleMax - style.scaleMin) * breath
+        }
         val canvas = drawContext.canvas.nativeCanvas
         val cx = width * 0.5f
         val cy = height * 0.5f
@@ -57,8 +64,16 @@ fun IconPresence(
         canvas.translate(cx, cy)
         canvas.scale(scale, scale)
         canvas.translate(-cx, -cy)
-        paints.glow.alpha = (160 + (70f * style.pulse * breath)).toInt().coerceIn(0, 255)
-        paints.nucleus.alpha = (200 + (55f * style.pulse * wave)).toInt().coerceIn(0, 255)
+        paints.glow.alpha = if (voice) {
+            (80 + 160f * level).toInt().coerceIn(0, 255)
+        } else {
+            (160 + (70f * style.pulse * breath)).toInt().coerceIn(0, 255)
+        }
+        paints.nucleus.alpha = if (voice) {
+            (120 + 135f * level).toInt().coerceIn(0, 255)
+        } else {
+            (200 + (55f * style.pulse * wave)).toInt().coerceIn(0, 255)
+        }
         canvas.drawCircle(cx, cy, paints.glowRadius, paints.glow)
         canvas.drawCircle(cx, cy, paints.nucleusRadius, paints.nucleus)
         val extent = paints.minExtent
@@ -160,6 +175,7 @@ private fun strokePaint(): Paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
 
 private fun fade(color: Int, alpha: Int): Int = (color and 0x00FFFFFF) or (alpha shl 24)
 
+private const val VOICE_FLOOR = 0.05f
 private const val RING_COUNT = 3
 private const val TAU = 6.2831855f
 private val RING_RADIUS = floatArrayOf(0.40f, 0.56f, 0.72f)

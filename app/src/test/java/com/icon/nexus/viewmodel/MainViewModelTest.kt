@@ -11,69 +11,139 @@ import com.icon.nexus.domain.AppState
 import com.icon.nexus.domain.AppStateMachine
 import com.icon.nexus.domain.StateTransition
 import com.icon.nexus.settings.ModelProviderId
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class MainViewModelTest {
-    @Test
-    fun micCyclesLocalStatesAndClosesTheMicOutsideListening() {
-        val speech = SpeechInputGate()
-        val viewModel = viewModel(speech = speech)
-
-        assertEquals(AppState.Listening(1L), viewModel.onMicClicked().getOrThrow())
-        assertEquals(1L, speech.activeTurnId)
-
-        assertEquals(AppState.Thinking(2L), viewModel.onMicClicked().getOrThrow())
-        assertNull(speech.activeTurnId)
-
-        assertEquals(AppState.Speaking(2L), viewModel.onMicClicked().getOrThrow())
-        assertNull(speech.activeTurnId)
-
-        assertEquals(AppState.Idle, viewModel.onMicClicked().getOrThrow())
-        assertNull(speech.activeTurnId)
+    @After
+    fun resetMainDispatcher() {
+        runCatching { Dispatchers.resetMain() }
     }
 
     @Test
-    fun interruptStopsSpeechThenBumpsTurnIdIntoListening() {
+    fun demoSessionAdvancesThenReturnsToIdle() = runTest {
+        val speech = SpeechInputGate()
+        val viewModel = timedViewModel(speech = speech)
+        viewModel.onMicClicked()
+        runCurrent()
+
+        assertEquals(AppState.Listening(1L), viewModel.appState.value)
+        assertEquals(1L, speech.activeTurnId)
+        assertEquals("", viewModel.userLine.value)
+
+        elapse(DEMO_LISTEN_MILLIS)
+        val thinking = viewModel.appState.value as AppState.Thinking
+        assertEquals(2L, thinking.turnId)
+        assertNull(speech.activeTurnId)
+        assertEquals(demoTranscript[0].first, viewModel.userLine.value)
+        assertEquals("", viewModel.iconLine.value)
+
+        elapse(DEMO_THINK_MILLIS)
+        val speaking = viewModel.appState.value as AppState.Speaking
+        assertEquals(thinking.turnId, speaking.turnId)
+        assertEquals(demoTranscript[0].second, viewModel.iconLine.value)
+        assertEquals(0f, viewModel.audioLevel.value, 0.0001f)
+
+        elapse(DEMO_LEVEL_FRAME_MILLIS)
+        assertTrue(viewModel.appState.value is AppState.Speaking)
+        assertTrue(viewModel.audioLevel.value > 0.05f)
+        assertTrue(viewModel.audioLevel.value <= 1f)
+
+        elapse(speakingMillis(demoTranscript[0].second) - DEMO_LEVEL_FRAME_MILLIS)
+        assertEquals(AppState.Idle, viewModel.appState.value)
+        assertNull(speech.activeTurnId)
+
+        advanceUntilIdle()
+        assertEquals(0f, viewModel.audioLevel.value, 0.0001f)
+        assertEquals(AppState.Idle, viewModel.appState.value)
+    }
+
+    @Test
+    fun newerTurnIgnoresStaleLevelAndTranscriptUpdates() = runTest {
         val speech = SpeechInputGate()
         val synthesizer = QueuedSpeechSynthesizer()
-        val viewModel = viewModel(speech = speech, synthesizer = synthesizer)
+        val viewModel = timedViewModel(speech = speech, synthesizer = synthesizer)
         viewModel.onMicClicked()
-        viewModel.onMicClicked()
-        viewModel.onMicClicked()
-        synthesizer.enqueue(2L, listOf("Hello.", "Again."))
+        runCurrent()
+        elapse(DEMO_LISTEN_MILLIS + DEMO_THINK_MILLIS + DEMO_LEVEL_FRAME_MILLIS)
 
-        val interrupted = viewModel.onUserInterrupt().getOrThrow()
-        assertEquals(AppState.Listening(3L), interrupted)
+        val speaking = viewModel.appState.value as AppState.Speaking
+        synthesizer.enqueue(speaking.turnId, listOf("Hello.", "Again."))
+        val levelWhileSpeaking = viewModel.audioLevel.value
+        assertTrue(levelWhileSpeaking > 0f)
+        val userLine = viewModel.userLine.value
+        val iconLine = viewModel.iconLine.value
+
+        viewModel.onMicLongPress()
+        runCurrent()
+
+        val listening = viewModel.appState.value as AppState.Listening
+        assertTrue(listening.turnId > speaking.turnId)
+        assertEquals(listening.turnId, speech.activeTurnId)
         assertTrue(synthesizer.pending.isEmpty())
-        assertEquals(3L, speech.activeTurnId)
-        assertEquals(demoTranscript[0].first, viewModel.userLine.value)
-        assertEquals(demoTranscript[0].second, viewModel.iconLine.value)
-        assertEquals("Listening", statusLabel(viewModel.appState.value))
+        assertEquals(0f, viewModel.audioLevel.value, 0.0001f)
+        assertEquals(userLine, viewModel.userLine.value)
+        assertEquals(iconLine, viewModel.iconLine.value)
+
+        viewModel.pushAmplitude(speaking.turnId, 1f)
+        assertEquals(0f, viewModel.audioLevel.value, 0.0001f)
+
+        elapse(DEMO_LISTEN_MILLIS - 1)
+        assertEquals(listening, viewModel.appState.value)
+        assertEquals(userLine, viewModel.userLine.value)
+        assertEquals(iconLine, viewModel.iconLine.value)
     }
 
     @Test
-    fun transcriptStartsHiddenAndFollowsTheDemoLap() {
-        val viewModel = viewModel()
+    fun alertPreviewReturnsToIdle() = runTest {
+        val viewModel = timedViewModel()
+        viewModel.onMicLongPress()
+        runCurrent()
+        assertTrue(viewModel.appState.value is AppState.Alert)
+        assertEquals("Alert", statusLabel(viewModel.appState.value))
+
+        elapse(DEMO_ALERT_MILLIS - 1)
+        assertTrue(viewModel.appState.value is AppState.Alert)
+
+        elapse(1)
+        assertEquals(AppState.Idle, viewModel.appState.value)
+
+        elapse(5_000)
+        assertEquals(AppState.Idle, viewModel.appState.value)
+    }
+
+    @Test
+    fun transcriptFollowsTimedLapsAndToggle() = runTest {
+        val viewModel = timedViewModel()
         assertFalse(viewModel.transcriptVisible.value)
-        assertTrue(viewModel.chromeVisible.value)
-        assertEquals("", viewModel.userLine.value)
-        assertEquals("", viewModel.iconLine.value)
         assertEquals("Ready", statusLabel(viewModel.appState.value))
 
         viewModel.onMicClicked()
-        viewModel.onMicClicked()
+        runCurrent()
+        elapse(DEMO_LISTEN_MILLIS)
         assertEquals(demoTranscript[0].first, viewModel.userLine.value)
         assertEquals("", viewModel.iconLine.value)
 
-        viewModel.onMicClicked()
+        elapse(DEMO_THINK_MILLIS)
         assertEquals(demoTranscript[0].second, viewModel.iconLine.value)
 
         viewModel.toggleTranscript()
@@ -81,12 +151,32 @@ class MainViewModelTest {
         viewModel.toggleTranscript()
         assertFalse(viewModel.transcriptVisible.value)
 
+        elapse(speakingMillis(demoTranscript[0].second))
+        advanceUntilIdle()
+        assertEquals(AppState.Idle, viewModel.appState.value)
+
         viewModel.onMicClicked()
-        viewModel.onMicClicked()
-        viewModel.onMicClicked()
-        viewModel.onMicClicked()
+        runCurrent()
+        elapse(DEMO_LISTEN_MILLIS)
         assertEquals(demoTranscript[1].first, viewModel.userLine.value)
+        elapse(DEMO_THINK_MILLIS)
         assertEquals(demoTranscript[1].second, viewModel.iconLine.value)
+    }
+
+    @Test
+    fun backgroundCancelsTheDemoAndReturnsToIdle() = runTest {
+        val speech = SpeechInputGate()
+        val viewModel = timedViewModel(speech = speech)
+        viewModel.onMicClicked()
+        runCurrent()
+        assertTrue(viewModel.appState.value is AppState.Listening)
+
+        assertEquals(AppState.Idle, viewModel.onAppBackgrounded().getOrThrow())
+        assertNull(speech.activeTurnId)
+        elapse(10_000)
+        assertEquals(AppState.Idle, viewModel.appState.value)
+        assertEquals("", viewModel.userLine.value)
+        assertEquals(AppState.Idle, viewModel.onAppBackgrounded().getOrThrow())
     }
 
     @Test
@@ -143,16 +233,6 @@ class MainViewModelTest {
     }
 
     @Test
-    fun backgroundReturnsToIdle() {
-        val speech = SpeechInputGate()
-        val viewModel = viewModel(speech = speech)
-        viewModel.onMicClicked()
-        assertEquals(AppState.Idle, viewModel.onAppBackgrounded().getOrThrow())
-        assertNull(speech.activeTurnId)
-        assertEquals(AppState.Idle, viewModel.onAppBackgrounded().getOrThrow())
-    }
-
-    @Test
     fun demoModeSelectsDemoProviderEvenWhenGeminiIsConfigured() = runBlocking {
         val settings = FakeSettingsRepository(
             AppSettings.defaults().copy(
@@ -167,6 +247,19 @@ class MainViewModelTest {
             gemini = GeminiProvider(settings),
         )
         assertEquals("demo", manager.select().id)
+    }
+
+    private fun TestScope.timedViewModel(
+        speech: SpeechInputGate = SpeechInputGate(),
+        synthesizer: QueuedSpeechSynthesizer = QueuedSpeechSynthesizer(),
+    ): MainViewModel {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        return viewModel(speech = speech, synthesizer = synthesizer)
+    }
+
+    private fun TestScope.elapse(millis: Long) {
+        advanceTimeBy(millis)
+        runCurrent()
     }
 
     private fun viewModel(

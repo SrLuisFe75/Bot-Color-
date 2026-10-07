@@ -18,7 +18,11 @@ Visual identity on the phase 1 shell. Material 3 dark theme, Outfit bundled in t
 
 Main screen on top of that identity. Full-bleed presence, a quiet status line, one mic control, and a slim cluster for the transcript, cinematic chrome, and a short settings sheet (demo mode and whether the transcript starts visible). Transcript lines are fixed local sentences.
 
-Gemini streaming from the UI, the microphone, Android text-to-speech, audio-reactive visuals, and cinematic playback are later phases.
+## Phase 4
+
+Timed local demo. A mic tap listens, thinks, speaks a fixed sentence with a smoothed voice level on the presence, then returns to Idle. Long-press while Idle previews Alert. Long-press while Speaking interrupts that turn.
+
+Gemini streaming from the UI, the microphone, Android text-to-speech, audio-reactive capture, and cinematic playback are later phases.
 
 ## Build
 
