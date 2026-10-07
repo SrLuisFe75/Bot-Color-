@@ -10,6 +10,7 @@ object SettingsDefaults {
     const val VOICE_RATE = 1.0f
     const val SHOW_TRANSCRIPT = false
     const val API_KEY = ""
+    const val GEMINI_MODEL = "gemini-2.5-flash"
     val THEME = VisualThemeId.Nexus
     val PROVIDER = ModelProviderId.DEMO
 }

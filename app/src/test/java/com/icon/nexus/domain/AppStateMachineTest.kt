@@ -58,6 +58,10 @@ class AppStateMachineTest {
             AppStateMachine(allocateTurnId = { 1L }).transition(StateTransition.ToListening).getOrThrow(),
         )
         assertEquals(
+            AppState.Thinking(3L),
+            AppStateMachine(allocateTurnId = { 3L }).transition(StateTransition.ToThinking).getOrThrow(),
+        )
+        assertEquals(
             AppState.Alert("notice"),
             AppStateMachine().transition(StateTransition.ToAlert("notice")).getOrThrow(),
         )
@@ -113,7 +117,6 @@ class AppStateMachineTest {
     fun illegalPathsLeaveStateUnchangedAndDoNotAllocate() {
         val cases = listOf(
             AppState.Idle to StateTransition.ToIdle,
-            AppState.Idle to StateTransition.ToThinking,
             AppState.Idle to StateTransition.ToSpeaking,
             AppState.Listening(1L) to StateTransition.ToListening,
             AppState.Listening(1L) to StateTransition.ToSpeaking,

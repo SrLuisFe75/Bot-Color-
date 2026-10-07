@@ -11,12 +11,17 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -28,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -48,6 +54,9 @@ fun MainScreen(viewModel: MainViewModel) {
     val audioLevel by viewModel.audioLevel.collectAsStateWithLifecycle()
     val demoMode by viewModel.demoMode.collectAsStateWithLifecycle()
     val transcriptStartsVisible by viewModel.transcriptStartsVisible.collectAsStateWithLifecycle()
+    val chatError by viewModel.chatError.collectAsStateWithLifecycle()
+    val apiKey by viewModel.apiKey.collectAsStateWithLifecycle()
+    val geminiModel by viewModel.geminiModel.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var settingsOpen by remember { mutableStateOf(false) }
     val statusColor = if (state is AppState.Alert) {
@@ -71,11 +80,12 @@ fun MainScreen(viewModel: MainViewModel) {
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
+                    .imePadding()
                     .padding(start = 28.dp, end = 28.dp, bottom = 18.dp)
                     .fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                if (transcriptVisible) {
+                if (transcriptVisible || !demoMode) {
                     TranscriptLayer(
                         userLine = userLine,
                         iconLine = iconLine,
@@ -87,6 +97,23 @@ fun MainScreen(viewModel: MainViewModel) {
                     color = statusColor,
                     textAlign = TextAlign.Center,
                 )
+                if (!demoMode && !chatError.isNullOrBlank()) {
+                    Text(
+                        text = chatError.orEmpty(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.tertiary,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+                if (!demoMode) {
+                    ChatComposer(
+                        onSend = viewModel::sendText,
+                        modifier = Modifier
+                            .padding(top = 14.dp)
+                            .fillMaxWidth(),
+                    )
+                }
                 MicControl(
                     onClick = viewModel::onMicClicked,
                     onLongClick = viewModel::onMicLongPress,
@@ -101,6 +128,12 @@ fun MainScreen(viewModel: MainViewModel) {
                         label = "Conversation",
                         onClick = viewModel::toggleTranscript,
                     )
+                    if (!demoMode) {
+                        QuietControl(
+                            label = "New conversation",
+                            onClick = viewModel::newConversation,
+                        )
+                    }
                     QuietControl(
                         label = "Cinematic",
                         onClick = viewModel::toggleCinematic,
@@ -129,11 +162,19 @@ fun MainScreen(viewModel: MainViewModel) {
         SettingsSheet(
             demoMode = demoMode,
             transcriptStartsVisible = transcriptStartsVisible,
+            apiKey = apiKey,
+            geminiModel = geminiModel,
             onDemoMode = { enabled ->
                 scope.launch { viewModel.setDemoMode(enabled) }
             },
             onTranscriptStartsVisible = { visible ->
                 scope.launch { viewModel.setTranscriptStartsVisible(visible) }
+            },
+            onApiKey = { value ->
+                scope.launch { viewModel.setApiKey(value) }
+            },
+            onGeminiModel = { value ->
+                scope.launch { viewModel.setGeminiModel(value) }
             },
             onDismiss = { settingsOpen = false },
         )
@@ -179,6 +220,44 @@ private fun TranscriptSentence(
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.82f),
             textAlign = TextAlign.Center,
         )
+    }
+}
+
+@Composable
+private fun ChatComposer(
+    onSend: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var draft by remember { mutableStateOf("") }
+    fun submit() {
+        val text = draft.trim()
+        if (text.isEmpty()) return
+        onSend(text)
+        draft = ""
+    }
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        OutlinedTextField(
+            value = draft,
+            onValueChange = { draft = it },
+            modifier = Modifier
+                .weight(1f)
+                .semantics { contentDescription = "Message" },
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodyMedium,
+            placeholder = { Text("Message") },
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+            keyboardActions = KeyboardActions(onSend = { submit() }),
+        )
+        TextButton(
+            onClick = ::submit,
+            modifier = Modifier.semantics { contentDescription = "Send" },
+        ) {
+            Text("Send")
+        }
     }
 }
 

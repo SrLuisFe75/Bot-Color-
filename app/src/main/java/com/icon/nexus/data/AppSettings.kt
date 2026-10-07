@@ -6,6 +6,7 @@ import com.icon.nexus.settings.SettingsDefaults
 
 data class AppSettings(
     val apiKey: String,
+    val geminiModel: String,
     val provider: ModelProviderId,
     val personaName: String,
     val personality: String,
@@ -17,6 +18,7 @@ data class AppSettings(
     companion object {
         fun defaults(): AppSettings = AppSettings(
             apiKey = SettingsDefaults.API_KEY,
+            geminiModel = SettingsDefaults.GEMINI_MODEL,
             provider = SettingsDefaults.PROVIDER,
             personaName = SettingsDefaults.ASSISTANT_NAME,
             personality = SettingsDefaults.PERSONALITY,

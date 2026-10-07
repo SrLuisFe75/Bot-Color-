@@ -15,9 +15,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 
 /**
- * Stores the API key, provider, persona, voice rate, theme, demo mode, and
- * transcript flag in [EncryptedSharedPreferences]. The API key defaults to
- * empty; nothing in source supplies a credential.
+ * Stores the API key, Gemini model, provider, persona, voice rate, theme,
+ * demo mode, and transcript flag in [EncryptedSharedPreferences]. The API key
+ * defaults to empty; nothing in source supplies a credential.
  */
 class EncryptedSettingsRepository(
     context: Context,
@@ -38,6 +38,7 @@ class EncryptedSettingsRepository(
             val next = transform(read())
             preferences.edit()
                 .putString(SettingsKeys.API_KEY, next.apiKey)
+                .putString(SettingsKeys.GEMINI_MODEL, next.geminiModel)
                 .putString(SettingsKeys.PROVIDER, next.provider.wireName)
                 .putString(SettingsKeys.PERSONA_NAME, next.personaName)
                 .putString(SettingsKeys.PERSONALITY, next.personality)
@@ -54,6 +55,8 @@ class EncryptedSettingsRepository(
         val defaults = AppSettings.defaults()
         return defaults.copy(
             apiKey = preferences.getString(SettingsKeys.API_KEY, defaults.apiKey) ?: defaults.apiKey,
+            geminiModel = preferences.getString(SettingsKeys.GEMINI_MODEL, defaults.geminiModel)
+                ?: defaults.geminiModel,
             provider = ModelProviderId.fromWire(
                 preferences.getString(SettingsKeys.PROVIDER, defaults.provider.wireName),
             ),

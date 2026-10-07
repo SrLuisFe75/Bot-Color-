@@ -198,12 +198,18 @@ class MainViewModelTest {
 
         viewModel.setDemoMode(false)
         viewModel.setTranscriptStartsVisible(true)
+        viewModel.setApiKey("secret-key")
+        viewModel.setGeminiModel("gemini-2.0-flash")
 
         assertFalse(settings.get().demoMode)
         assertTrue(settings.get().showTranscript)
+        assertEquals("secret-key", settings.get().apiKey)
+        assertEquals("gemini-2.0-flash", settings.get().geminiModel)
         assertFalse(viewModel.demoMode.value)
         assertTrue(viewModel.transcriptStartsVisible.value)
         assertTrue(viewModel.transcriptVisible.value)
+        assertEquals("secret-key", viewModel.apiKey.value)
+        assertEquals("gemini-2.0-flash", viewModel.geminiModel.value)
     }
 
     @Test

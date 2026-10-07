@@ -22,7 +22,11 @@ Main screen on top of that identity. Full-bleed presence, a quiet status line, o
 
 Timed local demo. A mic tap listens, thinks, speaks a fixed sentence with a smoothed voice level on the presence, then returns to Idle. Long-press while Idle previews Alert. Long-press while Speaking interrupts that turn.
 
-Gemini streaming from the UI, the microphone, Android text-to-speech, audio-reactive capture, and cinematic playback are later phases.
+## Phase 5
+
+Text chat with Gemini when demo mode is off. A single-line field and Send stream a reply into the ICON line, then return to Idle. The API key stays in encrypted settings. The timed demo is unchanged while demo mode is on.
+
+Speech recognition, Android text-to-speech, and cinematic playback are later phases.
 
 ## Build
 

@@ -22,59 +22,73 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Generative Language `models/{model}:streamGenerateContent` client.
- * The key is read from [SettingsRepository] on each call and is never a
- * constant. A blank key emits [AIEvent.Failed] and does not open a connection.
- * [AIManager] keeps this provider unselected while demo mode is on.
+ * The key is read from [SettingsRepository] on each call and is sent only in
+ * the `x-goog-api-key` header. A blank key emits [AIEvent.Failed] and does
+ * not open a connection.
  */
 class GeminiProvider(
     private val settings: SettingsRepository,
     private val client: OkHttpClient = defaultClient(),
-    private val model: String = DEFAULT_MODEL,
+    endpointRoot: String = PUBLIC_ENDPOINT_ROOT,
 ) : AIProvider {
+    private val endpointRoot: String = endpointRoot.trimEnd('/')
+
     override val id: String = ModelProviderId.GEMINI.wireName
 
     override fun streamReply(request: AIRequest): Flow<AIEvent> = flow {
-        val key = settings.get().apiKey.trim()
+        val current = settings.get()
+        val key = current.apiKey.trim()
         if (key.isEmpty()) {
-            emit(AIEvent.Failed("Gemini API key is blank."))
+            emit(AIEvent.Failed(GeminiMessages.BLANK_KEY))
             return@flow
         }
-        val call = client.newCall(buildRequest(request, key))
+        val model = current.geminiModel.trim().ifEmpty { DEFAULT_MODEL }
+        val call = client.newCall(buildRequest(request, key, model))
         currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
             if (cause != null) call.cancel()
         }
         try {
             call.execute().use { response ->
                 if (!response.isSuccessful) {
-                    val bodyText = response.body?.string().orEmpty().replace(key, "[redacted]")
-                    emit(AIEvent.Failed("Gemini HTTP ${response.code}: ${bodyText.take(300)}"))
+                    emit(AIEvent.Failed(geminiFailureMessage(response.code, null)))
                     return@use
                 }
                 val source = response.body?.source()
                 if (source == null) {
-                    emit(AIEvent.Failed("Gemini response had no body."))
+                    emit(AIEvent.Failed(GeminiMessages.EMPTY))
                     return@use
                 }
+                var emittedText = false
                 while (true) {
                     val line = source.readUtf8Line() ?: break
                     val payload = ssePayload(line) ?: continue
                     val text = runCatching { textFromChunk(payload) }.getOrDefault("")
-                    if (text.isNotEmpty()) emit(AIEvent.Token(text))
+                    if (text.isNotEmpty()) {
+                        emittedText = true
+                        emit(AIEvent.Token(text))
+                    }
+                }
+                if (!emittedText) {
+                    emit(AIEvent.Failed(GeminiMessages.EMPTY))
+                    return@use
                 }
                 emit(AIEvent.Completed(request.turnId))
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (io: IOException) {
-            val message = (io.message ?: io.javaClass.simpleName).replace(key, "[redacted]")
-            emit(AIEvent.Failed("Gemini connection failed: $message"))
+            val job = currentCoroutineContext()[Job]
+            if (job?.isActive == false) {
+                throw CancellationException("Gemini call cancelled", io)
+            }
+            emit(AIEvent.Failed(geminiFailureMessage(null, io)))
         }
     }.flowOn(Dispatchers.IO)
 
-    private fun buildRequest(request: AIRequest, key: String): Request {
+    private fun buildRequest(request: AIRequest, key: String, model: String): Request {
         val payload = json.encodeToString(GeminiRequest.serializer(), requestBody(request))
         return Request.Builder()
-            .url("$ENDPOINT_ROOT/models/$model:streamGenerateContent?alt=sse")
+            .url("$endpointRoot/models/$model:streamGenerateContent?alt=sse")
             .header("x-goog-api-key", key)
             .header("Content-Type", "application/json")
             .post(payload.toRequestBody(JSON_MEDIA))
@@ -92,12 +106,16 @@ class GeminiProvider(
                 add(GeminiContent(role = "user", parts = listOf(GeminiPart(request.userText))))
             }
         }
-        val personality = request.persona.personality.trim()
-        val system = if (personality.isEmpty()) {
-            null
-        } else {
-            GeminiContent(parts = listOf(GeminiPart(personality)))
-        }
+        val system = GeminiContent(
+            parts = listOf(
+                GeminiPart(
+                    geminiSystemInstruction(
+                        name = request.persona.name,
+                        personality = request.persona.personality,
+                    ),
+                ),
+            ),
+        )
         return GeminiRequest(contents = contents, systemInstruction = system)
     }
 
@@ -120,7 +138,7 @@ class GeminiProvider(
     }
 
     private companion object {
-        const val ENDPOINT_ROOT = "https://generativelanguage.googleapis.com/v1beta"
+        const val PUBLIC_ENDPOINT_ROOT = "https://generativelanguage.googleapis.com/v1beta"
         const val DEFAULT_MODEL = "gemini-2.5-flash"
         val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
         val json = Json {
@@ -130,8 +148,10 @@ class GeminiProvider(
         }
 
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
-            .connectTimeout(20, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .callTimeout(30, TimeUnit.SECONDS)
             .build()
 
         fun ssePayload(line: String): String? {

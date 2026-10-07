@@ -2,6 +2,7 @@ package com.icon.nexus.settings
 
 object SettingsKeys {
     const val API_KEY = "api_key"
+    const val GEMINI_MODEL = "gemini_model"
     const val PROVIDER = "provider"
     const val PERSONA_NAME = "persona_name"
     const val PERSONALITY = "personality"

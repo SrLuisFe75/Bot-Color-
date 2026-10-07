@@ -6,15 +6,19 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -22,8 +26,12 @@ import androidx.compose.ui.unit.dp
 fun SettingsSheet(
     demoMode: Boolean,
     transcriptStartsVisible: Boolean,
+    apiKey: String,
+    geminiModel: String,
     onDemoMode: (Boolean) -> Unit,
     onTranscriptStartsVisible: (Boolean) -> Unit,
+    onApiKey: (String) -> Unit,
+    onGeminiModel: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(
@@ -53,6 +61,26 @@ fun SettingsSheet(
                 label = "Show transcript at start",
                 checked = transcriptStartsVisible,
                 onCheckedChange = onTranscriptStartsVisible,
+            )
+            OutlinedTextField(
+                value = apiKey,
+                onValueChange = onApiKey,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                textStyle = MaterialTheme.typography.bodyMedium,
+                label = { Text("Gemini API key") },
+            )
+            OutlinedTextField(
+                value = geminiModel,
+                onValueChange = onGeminiModel,
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyMedium,
+                label = { Text("Model") },
             )
         }
     }

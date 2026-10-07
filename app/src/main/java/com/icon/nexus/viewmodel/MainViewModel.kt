@@ -4,8 +4,12 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.icon.nexus.ai.AIEvent
 import com.icon.nexus.ai.AIManager
+import com.icon.nexus.ai.AIProvider
+import com.icon.nexus.ai.AIRequest
 import com.icon.nexus.ai.DemoProvider
+import com.icon.nexus.ai.GeminiMessages
 import com.icon.nexus.ai.GeminiProvider
 import com.icon.nexus.audio.AudioAnalyzer
 import com.icon.nexus.audio.QueuedSpeechSynthesizer
@@ -13,11 +17,18 @@ import com.icon.nexus.audio.SpeechInput
 import com.icon.nexus.audio.SpeechInputGate
 import com.icon.nexus.audio.SpeechSynthesizer
 import com.icon.nexus.data.AppSettings
+import com.icon.nexus.data.ConversationRepository
 import com.icon.nexus.data.EncryptedSettingsRepository
+import com.icon.nexus.data.InMemoryConversationRepository
 import com.icon.nexus.data.SettingsRepository
 import com.icon.nexus.domain.AppState
 import com.icon.nexus.domain.AppStateMachine
+import com.icon.nexus.domain.AssistantPersona
+import com.icon.nexus.domain.Author
+import com.icon.nexus.domain.Conversation
+import com.icon.nexus.domain.Message
 import com.icon.nexus.domain.StateTransition
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,16 +36,21 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.min
 
 /**
  * Demo mode runs a timed local session on a mic tap. The job is tied to the
  * current turn id: a newer turn cancels stale level and transcript writes.
- * [aiManager] is not called.
+ * With demo mode off, [sendText] streams a Gemini reply into the transcript
+ * and returns to Idle. Speaking stays on the demo timeline.
  *
  * [onAppBackgrounded] is the background hook. The activity calls it from
- * `onStop` so leaving the foreground returns the app to Idle.
+ * `onStop` so leaving the foreground returns the app to Idle and cancels
+ * an in-flight Gemini call.
  */
 class MainViewModel(
     private val machine: AppStateMachine,
@@ -44,6 +60,8 @@ class MainViewModel(
     private val settings: SettingsRepository,
     initialSettings: AppSettings = AppSettings.defaults(),
     private val analyzer: AudioAnalyzer = AudioAnalyzer(),
+    private val gemini: AIProvider = GeminiProvider(settings),
+    private val conversations: ConversationRepository = InMemoryConversationRepository(),
 ) : ViewModel() {
     private val appStateInternal = MutableStateFlow(machine.current)
     val appState: StateFlow<AppState> = appStateInternal.asStateFlow()
@@ -72,11 +90,26 @@ class MainViewModel(
     private val audioLevelInternal = MutableStateFlow(0f)
     val audioLevel: StateFlow<Float> = audioLevelInternal.asStateFlow()
 
+    private val apiKeyInternal = MutableStateFlow(initialSettings.apiKey)
+    val apiKey: StateFlow<String> = apiKeyInternal.asStateFlow()
+
+    private val geminiModelInternal = MutableStateFlow(initialSettings.geminiModel)
+    val geminiModel: StateFlow<String> = geminiModelInternal.asStateFlow()
+
+    private val chatErrorInternal = MutableStateFlow<String?>(null)
+    val chatError: StateFlow<String?> = chatErrorInternal.asStateFlow()
+
+    private val settingsMutex = Mutex()
+    private val conversationMutex = Mutex()
+    private val chatGeneration = AtomicInteger(0)
+
     private var scriptIndex = 0
     private var levelGeneration = 0
     private var demoJob: Job? = null
+    private var chatJob: Job? = null
 
     fun onMicClicked() {
+        if (!demoModeInternal.value) return
         when (val state = appStateInternal.value) {
             AppState.Idle -> startDemoSession()
             is AppState.Listening -> {
@@ -91,11 +124,18 @@ class MainViewModel(
     }
 
     /**
-     * Idle previews Alert, then returns to Idle.
-     * Speaking interrupts: stop the demo job, bump the turn id, enter Listening.
-     * The previous turn can no longer write level or transcript.
+     * Demo mode: Idle previews Alert, then returns to Idle. Speaking
+     * interrupts into Listening. Text chat: a long press while Thinking
+     * cancels the Gemini call and returns to Idle.
      */
     fun onMicLongPress() {
+        if (!demoModeInternal.value) {
+            if (appStateInternal.value is AppState.Thinking) {
+                cancelChat()
+                dispatch(StateTransition.ToIdle)
+            }
+            return
+        }
         when (appStateInternal.value) {
             AppState.Idle -> startAlertPreview()
             is AppState.Speaking -> interruptSpeaking()
@@ -116,10 +156,39 @@ class MainViewModel(
      */
     fun onAppBackgrounded(): Result<AppState> {
         stopDemoWork()
+        cancelChat()
         if (appStateInternal.value is AppState.Idle) {
             return Result.success(AppState.Idle)
         }
         return dispatch(StateTransition.ToIdle)
+    }
+
+    fun sendText(raw: String) {
+        if (demoModeInternal.value) return
+        val text = raw.trim()
+        if (text.isEmpty()) return
+        val state = appStateInternal.value
+        if (state !is AppState.Idle && state !is AppState.Thinking) return
+        val generation = beginChatTurn()
+        chatJob = viewModelScope.launch {
+            runChatTurn(generation, text)
+        }
+    }
+
+    fun newConversation() {
+        if (demoModeInternal.value) return
+        cancelChat()
+        userLineInternal.value = ""
+        iconLineInternal.value = ""
+        chatErrorInternal.value = null
+        if (appStateInternal.value !is AppState.Idle) {
+            dispatch(StateTransition.ToIdle)
+        }
+        viewModelScope.launch {
+            conversationMutex.withLock {
+                conversations.delete(CURRENT_CONVERSATION)
+            }
+        }
     }
 
     fun toggleTranscript() {
@@ -135,14 +204,32 @@ class MainViewModel(
     }
 
     suspend fun setDemoMode(enabled: Boolean) {
-        settings.update { current -> current.copy(demoMode = enabled) }
+        settingsMutex.withLock {
+            settings.update { current -> current.copy(demoMode = enabled) }
+        }
         demoModeInternal.value = enabled
     }
 
     suspend fun setTranscriptStartsVisible(visible: Boolean) {
-        settings.update { current -> current.copy(showTranscript = visible) }
+        settingsMutex.withLock {
+            settings.update { current -> current.copy(showTranscript = visible) }
+        }
         transcriptStartsVisibleInternal.value = visible
         transcriptVisibleInternal.value = visible
+    }
+
+    suspend fun setApiKey(value: String) {
+        apiKeyInternal.value = value
+        settingsMutex.withLock {
+            settings.update { current -> current.copy(apiKey = value) }
+        }
+    }
+
+    suspend fun setGeminiModel(value: String) {
+        geminiModelInternal.value = value
+        settingsMutex.withLock {
+            settings.update { current -> current.copy(geminiModel = value) }
+        }
     }
 
     /**
@@ -167,8 +254,10 @@ class MainViewModel(
                 else -> speechInput.stopListening()
             }
             when (next) {
-                is AppState.Thinking -> userLineInternal.value = demoTranscript[scriptIndex].first
-                is AppState.Speaking -> {
+                is AppState.Thinking -> if (demoModeInternal.value) {
+                    userLineInternal.value = demoTranscript[scriptIndex].first
+                }
+                is AppState.Speaking -> if (demoModeInternal.value) {
                     iconLineInternal.value = demoTranscript[scriptIndex].second
                     scriptIndex = (scriptIndex + 1) % demoTranscript.size
                 }
@@ -260,6 +349,122 @@ class MainViewModel(
         audioLevelInternal.value = 0f
     }
 
+    private fun beginChatTurn(): Int {
+        val generation = chatGeneration.incrementAndGet()
+        chatJob?.cancel()
+        chatJob = null
+        if (appStateInternal.value is AppState.Thinking) {
+            dispatch(StateTransition.ToIdle)
+        }
+        return generation
+    }
+
+    private fun cancelChat() {
+        chatGeneration.incrementAndGet()
+        chatJob?.cancel()
+        chatJob = null
+    }
+
+    private suspend fun runChatTurn(generation: Int, text: String) {
+        if (chatGeneration.get() != generation) return
+        val thinking = dispatch(StateTransition.ToThinking).getOrNull() as? AppState.Thinking ?: return
+        if (chatGeneration.get() != generation) return
+        val turnId = thinking.turnId
+        userLineInternal.value = text
+        iconLineInternal.value = ""
+        chatErrorInternal.value = null
+        try {
+            val current = settings.get()
+            if (chatGeneration.get() != generation || !ownsTurn(turnId)) return
+            if (current.apiKey.isBlank()) {
+                chatErrorInternal.value = GeminiMessages.BLANK_KEY
+                return
+            }
+            val history = conversationMutex.withLock {
+                if (chatGeneration.get() != generation) {
+                    null
+                } else {
+                    val prior = conversations.get(CURRENT_CONVERSATION)?.messages.orEmpty()
+                    conversations.save(
+                        Conversation(
+                            id = CURRENT_CONVERSATION,
+                            messages = prior + Message(
+                                id = "user-$turnId",
+                                author = Author.User,
+                                text = text,
+                                turnId = turnId,
+                            ),
+                        ),
+                    )
+                    prior
+                }
+            } ?: return
+            if (chatGeneration.get() != generation || !ownsTurn(turnId)) return
+            val persona = AssistantPersona(
+                name = current.personaName,
+                personality = current.personality,
+            )
+            gemini.streamReply(
+                AIRequest(
+                    turnId = turnId,
+                    persona = persona,
+                    history = history,
+                    userText = text,
+                ),
+            ).collect { event ->
+                if (chatGeneration.get() != generation || !ownsTurn(turnId)) return@collect
+                when (event) {
+                    is AIEvent.Token -> iconLineInternal.value += event.text
+                    is AIEvent.Failed -> {
+                        chatErrorInternal.value = event.message.ifBlank { GeminiMessages.EMPTY }
+                    }
+                    is AIEvent.Completed -> {
+                        val reply = iconLineInternal.value.trim()
+                        if (reply.isEmpty()) {
+                            chatErrorInternal.value = GeminiMessages.EMPTY
+                        } else {
+                            chatErrorInternal.value = null
+                            saveAssistant(generation, turnId, reply)
+                        }
+                    }
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            if (chatGeneration.get() == generation && ownsTurn(turnId)) {
+                chatErrorInternal.value = GeminiMessages.OFFLINE
+            }
+        } finally {
+            if (
+                chatGeneration.get() == generation &&
+                ownsTurn(turnId) &&
+                appStateInternal.value is AppState.Thinking
+            ) {
+                dispatch(StateTransition.ToIdle)
+            }
+        }
+    }
+
+    private suspend fun saveAssistant(generation: Int, turnId: Long, reply: String) {
+        conversationMutex.withLock {
+            if (chatGeneration.get() != generation) return@withLock
+            val prior = conversations.get(CURRENT_CONVERSATION)?.messages.orEmpty()
+            if (prior.any { it.id == "icon-$turnId" }) return@withLock
+            conversations.save(
+                Conversation(
+                    id = CURRENT_CONVERSATION,
+                    messages = prior + Message(
+                        id = "icon-$turnId",
+                        author = Author.Assistant,
+                        text = reply,
+                        turnId = turnId,
+                    ),
+                ),
+            )
+        }
+    }
+
     private fun still(generation: Int, turnId: Long): Boolean {
         if (levelGeneration != generation) return false
         return ownsTurn(turnId)
@@ -286,16 +491,19 @@ class MainViewModel(
     }
 
     companion object {
+        private const val CURRENT_CONVERSATION = "current"
+
         fun factory(context: Context): ViewModelProvider.Factory {
             return object : ViewModelProvider.Factory {
                 override fun <T : ViewModel> create(modelClass: Class<T>): T {
                     val turns = AtomicLong(0)
                     val settings = EncryptedSettingsRepository(context.applicationContext)
                     val initial = runBlocking { settings.get() }
+                    val gemini = GeminiProvider(settings)
                     val manager = AIManager(
                         settings = settings,
                         demo = DemoProvider(),
-                        gemini = GeminiProvider(settings),
+                        gemini = gemini,
                     )
                     val model = MainViewModel(
                         machine = AppStateMachine { turns.incrementAndGet() },
@@ -304,6 +512,8 @@ class MainViewModel(
                         aiManager = manager,
                         settings = settings,
                         initialSettings = initial,
+                        gemini = gemini,
+                        conversations = InMemoryConversationRepository(),
                     )
                     @Suppress("UNCHECKED_CAST")
                     return model as T

@@ -2,7 +2,7 @@ package com.icon.nexus.domain
 
 /**
  * Legal edges only:
- * Idle → Listening, Idle → Alert
+ * Idle → Listening, Idle → Thinking, Idle → Alert
  * Listening → Thinking, Listening → Idle, Listening → Alert
  * Thinking → Speaking, Thinking → Idle, Thinking → Alert, Thinking → Listening
  * Speaking → Idle, Speaking → Listening, Speaking → Alert
@@ -39,7 +39,9 @@ class AppStateMachine(
     companion object {
         fun isLegal(from: AppState, target: StateTransition): Boolean = when (from) {
             AppState.Idle ->
-                target is StateTransition.ToListening || target is StateTransition.ToAlert
+                target is StateTransition.ToListening ||
+                    target is StateTransition.ToThinking ||
+                    target is StateTransition.ToAlert
             is AppState.Listening ->
                 target is StateTransition.ToThinking ||
                     target is StateTransition.ToIdle ||
