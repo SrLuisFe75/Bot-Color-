@@ -14,6 +14,10 @@ ICON (Intelligent Conversational Operating Nexus) is a native Kotlin and Jetpack
 
 Visual identity on the phase 1 shell. Material 3 dark theme, Outfit bundled in the APK (no runtime font download), and a procedural Canvas presence on the main screen. The mic still only cycles the local demo.
 
+## Phase 3
+
+Main screen on top of that identity. Full-bleed presence, a quiet status line, one mic control, and a slim cluster for the transcript, cinematic chrome, and a short settings sheet (demo mode and whether the transcript starts visible). Transcript lines are fixed local sentences.
+
 Gemini streaming from the UI, the microphone, Android text-to-speech, audio-reactive visuals, and cinematic playback are later phases.
 
 ## Build
