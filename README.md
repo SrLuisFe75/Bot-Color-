@@ -1,4 +1,27 @@
-# Hair Color Mixing Telegram Bot
+# ICON
+
+ICON (Intelligent Conversational Operating Nexus) is a native Kotlin and Jetpack Compose app (`com.icon.nexus`). Phase 1 is the Android Studio project and a local demo shell. It is not a WebView.
+
+## Phase 1
+
+- min SDK 26, target SDK 35, compile SDK 35, single module `:app`
+- `MainActivity` and a Compose screen that shows the word ICON, the current `AppState` name, and a mic button
+- The mic button cycles a local state machine only: Idle → Listening → Thinking → Speaking → Idle. Long-press the mic while Speaking interrupts into Listening. No network.
+- `DemoProvider` is the default model boundary. `GeminiProvider` reads the API key from encrypted settings and fails the turn when that key is blank. The key is not a source constant.
+- Contracts for speech input, speech synthesis, the visualizer, cinematic shots, conversation history, and opt-in memory
+
+Gemini streaming from the UI, the microphone, Android text-to-speech, the Canvas visualizer, and cinematic playback are later phases.
+
+## Build
+
+```bash
+./gradlew :app:assembleDebug
+./gradlew :app:testDebugUnitTest
+```
+
+The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
+
+## Hair Color Mixing Telegram Bot
 
 Bot de Telegram para buscar y mezclar colores profesionales de cabello (Igora, Wella, L'Oréal), guardar favoritos y ver previsualizaciones.
 
@@ -72,4 +95,4 @@ DECRYPT_PASSWORD=...
 Se usa `PicklePersistence` en `data/persistence.pkl` para guardar favoritos por usuario.
 
 ## Notas
-- Puedes ampliar la base de datos en `bot/database.py` o cargar desde JSON. 
+- Puedes ampliar la base de datos en `bot/database.py` o cargar desde JSON.
