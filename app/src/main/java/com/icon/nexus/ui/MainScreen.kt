@@ -3,10 +3,10 @@ package com.icon.nexus.ui
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
@@ -20,47 +20,65 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.icon.nexus.domain.AppState
+import com.icon.nexus.ui.presence.IconPresence
 import com.icon.nexus.viewmodel.MainViewModel
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MainScreen(viewModel: MainViewModel) {
     val state by viewModel.appState.collectAsStateWithLifecycle()
-    Column(
+    val caption = if (state is AppState.Alert) {
+        MaterialTheme.colorScheme.tertiary
+    } else {
+        MaterialTheme.colorScheme.onBackground.copy(alpha = 0.62f)
+    }
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+            .background(MaterialTheme.colorScheme.background),
     ) {
-        Text(
-            text = "ICON",
-            style = MaterialTheme.typography.displayMedium,
-            color = MaterialTheme.colorScheme.onBackground,
+        IconPresence(
+            state = state,
+            modifier = Modifier.fillMaxSize(),
         )
-        Text(
-            text = state.name,
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.padding(top = 12.dp),
-        )
-        Box(
+        Column(
             modifier = Modifier
-                .padding(top = 28.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary)
-                .combinedClickable(
-                    onClick = { viewModel.onMicClicked() },
-                    onLongClick = { viewModel.onUserInterrupt() },
-                )
-                .semantics { contentDescription = "Mic" }
-                .padding(horizontal = 28.dp, vertical = 16.dp),
-            contentAlignment = Alignment.Center,
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(start = 24.dp, end = 24.dp, bottom = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
-                text = "Mic",
-                color = MaterialTheme.colorScheme.onPrimary,
+                text = "ICON",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.78f),
             )
+            Text(
+                text = state.name,
+                style = MaterialTheme.typography.labelLarge,
+                color = caption,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            Box(
+                modifier = Modifier
+                    .padding(top = 16.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .combinedClickable(
+                        onClick = { viewModel.onMicClicked() },
+                        onLongClick = { viewModel.onUserInterrupt() },
+                    )
+                    .semantics { contentDescription = "Mic" }
+                    .padding(horizontal = 22.dp, vertical = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "Mic",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
         }
     }
 }

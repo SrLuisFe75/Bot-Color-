@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import com.icon.nexus.ui.theme.IconTheme
 import com.icon.nexus.viewmodel.MainViewModel
 
 class MainActivity : ComponentActivity() {
