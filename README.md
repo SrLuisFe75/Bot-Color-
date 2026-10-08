@@ -38,6 +38,10 @@ Android text-to-speech when demo mode is off. Gemini sentences are queued as the
 
 One `AppState` flow drives speech, Gemini, text-to-speech, the transcript, and the presence. Exceptional failures enter Alert with the existing message, then return to Idle. The timed demo, including the Idle long-press Alert preview, is unchanged.
 
+## Phase 9
+
+ICON CORE is the only visualizer theme. A full-bleed canvas draws a holographic nucleus, slow elliptical rings, and a capped mote field. Idle, Listening, Thinking, Speaking, and Alert each move that core. Other theme ids resolve to ICON CORE. The screen chrome is unchanged.
+
 Cinematic playback is a later phase.
 
 ## Build

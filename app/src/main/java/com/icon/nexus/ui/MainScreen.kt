@@ -43,7 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.icon.nexus.audio.SpeechMessages
 import com.icon.nexus.domain.AppState
-import com.icon.nexus.ui.presence.IconPresence
+import com.icon.nexus.visualizer.IconCoreScene
 import com.icon.nexus.viewmodel.MainViewModel
 import com.icon.nexus.viewmodel.statusLabel
 import kotlinx.coroutines.launch
@@ -82,7 +82,7 @@ fun MainScreen(viewModel: MainViewModel) {
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        IconPresence(
+        IconCoreScene(
             state = state,
             audioLevel = audioLevel,
             modifier = Modifier

@@ -4,4 +4,5 @@ enum class VisualThemeId {
     Nexus,
     Aurora,
     Ember,
+    Core,
 }

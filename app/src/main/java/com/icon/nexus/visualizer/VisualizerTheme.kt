@@ -7,19 +7,20 @@ interface VisualizerTheme {
     val label: String
 }
 
-data class PaletteTheme(
-    override val id: VisualThemeId,
-    override val label: String,
-) : VisualizerTheme
+/**
+ * The only implemented scene. Any other [VisualThemeId] still resolves here.
+ */
+object IconCoreTheme : VisualizerTheme {
+    override val id: VisualThemeId = VisualThemeId.Core
+    override val label: String = "ICON CORE"
+}
 
 object VisualizerThemes {
-    val nexus: VisualizerTheme = PaletteTheme(VisualThemeId.Nexus, "Nexus")
-    val aurora: VisualizerTheme = PaletteTheme(VisualThemeId.Aurora, "Aurora")
-    val ember: VisualizerTheme = PaletteTheme(VisualThemeId.Ember, "Ember")
-
     fun forId(id: VisualThemeId): VisualizerTheme = when (id) {
-        VisualThemeId.Nexus -> nexus
-        VisualThemeId.Aurora -> aurora
-        VisualThemeId.Ember -> ember
+        VisualThemeId.Core,
+        VisualThemeId.Nexus,
+        VisualThemeId.Aurora,
+        VisualThemeId.Ember,
+        -> IconCoreTheme
     }
 }

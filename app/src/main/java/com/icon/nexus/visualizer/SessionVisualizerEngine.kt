@@ -1,11 +1,12 @@
 package com.icon.nexus.visualizer
 
+import com.icon.nexus.domain.VisualThemeId
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 class SessionVisualizerEngine(
-    initial: VisualizerTheme = VisualizerThemes.nexus,
+    initial: VisualizerTheme = VisualizerThemes.forId(VisualThemeId.Nexus),
 ) : VisualizerEngine {
     private val state = MutableStateFlow(
         VisualState(themeId = initial.id),
