@@ -12,6 +12,7 @@ object SettingsDefaults {
     const val LANGUAGE_TAG = ""
     const val VISUAL_SENSITIVITY = 1.0f
     const val SHOW_TRANSCRIPT = false
+    const val ONBOARDING_COMPLETE = false
     const val API_KEY = ""
     const val GEMINI_MODEL = "gemini-2.5-flash"
     val THEME = VisualThemeId.Nexus

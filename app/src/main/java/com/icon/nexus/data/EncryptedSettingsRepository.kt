@@ -17,7 +17,8 @@ import kotlinx.coroutines.withContext
 /**
  * Stores settings in [EncryptedSharedPreferences], including the Gemini API
  * key. The key defaults to empty; nothing in source supplies a credential.
- * Voice rate, volume, language, and visual sensitivity are stored here too.
+ * Voice rate, volume, language, visual sensitivity, and the first-run
+ * onboarding flag are stored here too.
  */
 class EncryptedSettingsRepository(
     context: Context,
@@ -49,6 +50,7 @@ class EncryptedSettingsRepository(
                 .putBoolean(SettingsKeys.DEMO_MODE, next.demoMode)
                 .putBoolean(SettingsKeys.SHOW_TRANSCRIPT, next.showTranscript)
                 .putFloat(SettingsKeys.VISUAL_SENSITIVITY, next.visualSensitivity)
+                .putBoolean(SettingsKeys.ONBOARDING_COMPLETE, next.onboardingComplete)
                 .commit()
             state.value = next
         }
@@ -80,6 +82,10 @@ class EncryptedSettingsRepository(
             visualSensitivity = preferences.getFloat(
                 SettingsKeys.VISUAL_SENSITIVITY,
                 defaults.visualSensitivity,
+            ),
+            onboardingComplete = preferences.getBoolean(
+                SettingsKeys.ONBOARDING_COMPLETE,
+                defaults.onboardingComplete,
             ),
         )
     }

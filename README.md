@@ -62,6 +62,10 @@ The cinematic control plays a live camera over ICON CORE for about 30 seconds. T
 
 Settings is one screen in the ICON theme, opened from the settings control. The presence stays home. ICON stores the assistant name and personality, and empty values fall back to the defaults in the system instruction. Voice stores speech rate, volume, and a language tag for Android text-to-speech and the recognizer. AI stores Demo or Gemini, the model, and a masked API key in the existing encrypted settings. Demo still runs the local timeline and does not call Gemini. Visual keeps ICON CORE as the only scene, scales the voice level by visual sensitivity, and Show conversation still controls the transcript. Memory opens the existing memory screen. About shows the name and the app version. Privacy on that screen says what stays on the device and what a Gemini turn sends.
 
+## Phase 15
+
+The first launch shows a short introduction, then never again after the person finishes or skips to the end. The flag stays in the existing settings store. The pages are the name, four lines, the microphone explanation and permission, Demo or Gemini with a masked key only for Gemini, a voice language and a spoken preview that can be stopped, and one ICON CORE card. Meet ICON opens the main screen. A later cold start opens that screen directly. Denying the microphone does not block the end. Settings is unchanged.
+
 ## Build
 
 ```bash

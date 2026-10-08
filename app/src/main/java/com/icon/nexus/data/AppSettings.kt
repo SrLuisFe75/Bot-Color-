@@ -17,6 +17,7 @@ data class AppSettings(
     val demoMode: Boolean,
     val showTranscript: Boolean,
     val visualSensitivity: Float,
+    val onboardingComplete: Boolean,
 ) {
     companion object {
         fun defaults(): AppSettings = AppSettings(
@@ -32,6 +33,7 @@ data class AppSettings(
             demoMode = SettingsDefaults.DEMO_MODE,
             showTranscript = SettingsDefaults.SHOW_TRANSCRIPT,
             visualSensitivity = SettingsDefaults.VISUAL_SENSITIVITY,
+            onboardingComplete = SettingsDefaults.ONBOARDING_COMPLETE,
         )
     }
 }

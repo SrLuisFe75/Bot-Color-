@@ -50,6 +50,7 @@ import com.icon.nexus.domain.resolvedPersona
 import com.icon.nexus.domain.Conversation
 import com.icon.nexus.domain.Message
 import com.icon.nexus.domain.StateTransition
+import com.icon.nexus.onboarding.canLeaveOnboarding
 import com.icon.nexus.settings.ModelProviderId
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -172,6 +173,18 @@ class MainViewModel(
     private val visualSensitivityInternal = MutableStateFlow(initialSettings.visualSensitivity)
     val visualSensitivity: StateFlow<Float> = visualSensitivityInternal.asStateFlow()
 
+    private val showOnboardingInternal = MutableStateFlow(!initialSettings.onboardingComplete)
+    val showOnboarding: StateFlow<Boolean> = showOnboardingInternal.asStateFlow()
+
+    private val voicePreviewNoticeInternal = MutableStateFlow<String?>(null)
+    val voicePreviewNotice: StateFlow<String?> = voicePreviewNoticeInternal.asStateFlow()
+
+    private val voicePreviewActiveInternal = MutableStateFlow(false)
+    val voicePreviewActive: StateFlow<Boolean> = voicePreviewActiveInternal.asStateFlow()
+
+    val speechAvailable: Boolean
+        get() = synthesizer.available
+
     private val microphoneExplanationInternal = MutableStateFlow(false)
     val microphoneExplanation: StateFlow<Boolean> = microphoneExplanationInternal.asStateFlow()
 
@@ -202,19 +215,30 @@ class MainViewModel(
         liveSpeech.setListener { event -> onSpeechEvent(event) }
         synthesizer.setPlaybackListener(object : SpeechPlaybackListener {
             override fun onUtteranceStarted(turnId: Long) {
+                if (turnId == VOICE_PREVIEW_TURN) return
                 onPlaybackFallback(turnId, UtteranceEnergy.onStart())
             }
 
             override fun onUtteranceRange(turnId: Long) {
+                if (turnId == VOICE_PREVIEW_TURN) return
                 onPlaybackFallback(turnId, UtteranceEnergy.onRangeStart())
             }
 
             override fun onUtteranceFinished(turnId: Long) {
+                if (turnId == VOICE_PREVIEW_TURN) {
+                    voicePreviewActiveInternal.value = false
+                    return
+                }
                 onPlaybackFallback(turnId, UtteranceEnergy.onDone())
                 onSpeechFinished(turnId)
             }
 
             override fun onSpeechUnavailable() {
+                if (voicePreviewActiveInternal.value) {
+                    voicePreviewActiveInternal.value = false
+                    voicePreviewNoticeInternal.value = SpeechMessages.UNAVAILABLE
+                    return
+                }
                 val turnId = speechTurnId ?: return
                 markSpeechUnavailable(turnId)
             }
@@ -614,6 +638,36 @@ class MainViewModel(
     }
 
     /**
+     * Ends the introduction. A denied microphone still finishes. The flag
+     * stays in the same settings store, so the next cold start opens main.
+     */
+    suspend fun finishOnboarding(microphoneGranted: Boolean) {
+        if (!canLeaveOnboarding(microphoneGranted)) return
+        stopVoicePreview()
+        settingsMutex.withLock {
+            settings.update { current -> current.copy(onboardingComplete = true) }
+        }
+        showOnboardingInternal.value = false
+    }
+
+    fun previewVoice() {
+        if (!synthesizer.available) {
+            voicePreviewActiveInternal.value = false
+            voicePreviewNoticeInternal.value = SpeechMessages.UNAVAILABLE
+            return
+        }
+        voicePreviewNoticeInternal.value = null
+        voicePreviewActiveInternal.value = true
+        synthesizer.stop()
+        synthesizer.enqueue(VOICE_PREVIEW_TURN, listOf(VOICE_PREVIEW_SENTENCE))
+    }
+
+    fun stopVoicePreview() {
+        voicePreviewActiveInternal.value = false
+        synthesizer.stop()
+    }
+
+    /**
      * Applies one raw sample for [turnId]. A turn that is no longer Speaking
      * is ignored, so a stale job cannot move the envelope.
      */
@@ -864,6 +918,7 @@ class MainViewModel(
     }
 
     private fun abandonSpeech() {
+        voicePreviewActiveInternal.value = false
         speechTurnId = null
         pendingUtterances = 0
         replyFinished = false
@@ -1166,6 +1221,10 @@ class MainViewModel(
         }
     }
 }
+
+private const val VOICE_PREVIEW_TURN = -1L
+
+internal const val VOICE_PREVIEW_SENTENCE = "Hello, I am ICON."
 
 private const val MIN_VOICE_RATE = 0.25f
 private const val MAX_VOICE_RATE = 2f

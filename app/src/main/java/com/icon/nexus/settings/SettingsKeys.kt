@@ -13,4 +13,5 @@ object SettingsKeys {
     const val THEME = "theme"
     const val DEMO_MODE = "demo_mode"
     const val SHOW_TRANSCRIPT = "show_transcript"
+    const val ONBOARDING_COMPLETE = "onboarding_complete"
 }
