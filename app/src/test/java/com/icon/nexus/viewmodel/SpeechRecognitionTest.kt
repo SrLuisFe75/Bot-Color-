@@ -190,8 +190,7 @@ class SpeechRecognitionTest {
             assertEquals(thinking, viewModel.appState.value)
             assertFalse(speech.isActive)
         } finally {
-            release.countDown()
-            server.shutdown()
+            releaseHeldServer(release, server)
         }
     }
 
@@ -228,8 +227,7 @@ class SpeechRecognitionTest {
             assertFalse(viewModel.iconLine.value.contains("late"))
             assertEquals("hello", viewModel.userLine.value)
         } finally {
-            release.countDown()
-            server.shutdown()
+            releaseHeldServer(release, server)
         }
     }
 
@@ -254,6 +252,14 @@ class SpeechRecognitionTest {
         } finally {
             server.shutdown()
         }
+    }
+
+    private suspend fun releaseHeldServer(release: CountDownLatch, server: MockWebServer) {
+        release.countDown()
+        server.shutdown()
+        // The cancelled Gemini call finishes on Dispatchers.IO and resumes the
+        // collector on Main. Let that finish before the test resets Main.
+        kotlinx.coroutines.delay(200)
     }
 
     private fun leaveWith(reason: SpeechFailure): String {
