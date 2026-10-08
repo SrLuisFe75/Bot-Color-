@@ -70,6 +70,26 @@ The first launch shows a short introduction, then never again after the person f
 
 Privacy on the settings screen states what stays on the device, what a Gemini request sends, and that speech recognition may use the network. Speech synthesis and the visualizer stay on device. Demo mode sends nothing. The microphone opens for one utterance and ICON does not record audio to a file. While Listening, a live-mic mark sits next to the status word. Delete local data asks first, then removes conversations and memories, clears the API key, and leaves one new empty thread. Demo mode and the onboarding flag stay.
 
+## Phase 17
+
+Verification only. The checks below name the JVM tests that already covered each item, and the new tests fill the gaps. The app is not restyled.
+
+## Verification
+
+No emulator is installed in this environment, so the debug APK was not installed and a demo mic cycle was not run on a device.
+
+- Compiles: automated. `./gradlew :app:assembleDebug`
+- Interrupt clears speech, and a second turn does not speak the first answer: automated. `StateIntegrationTest.interruptThenSecondReplySpeaksOnlyTheNewTurn`, `TtsPlaybackTest.interruptClearsTheQueueAndIgnoresALateCompletion`
+- Two turns in one conversation keep order: automated. `ConversationHistoryViewModelTest.twoTurnsInOneConversationKeepOrder`
+- Demo timeline returns to Idle: automated. `MainViewModelTest.demoSessionAdvancesThenReturnsToIdle`
+- Each AppState maps to a distinct core motion: automated. `IconCoreThemeTest.eachAppStateMapsToADistinctCoreMotion`
+- Audio level scales the speaking nucleus; RMS and attack/release stay correct: automated. `IconCoreThemeTest.audioLevelScalesTheSpeakingNucleus`, `PlaybackEnergyTest.rmsOfAKnownWaveform`, `PlaybackEnergyTest.waveformEnergyStaysClampedThroughAttackAndRelease`, `AudioAnalyzerTest.attackRisesQuickly`, `AudioAnalyzerTest.releaseFallsSlowerThanAttack`
+- Cinematic run and cancel: automated. `ShotPlannerTest.tourLastsAboutThirtySecondsAndKeepsMoving`, `ShotPlannerTest.cancelEndsAtTheIdentityTransform`, `MainViewModelTest.cinematicSecondPressEasesBackAndBackgroundSettles`
+- Background stops the mic and text-to-speech: automated. `SpeechRecognitionTest.backgroundStopsListening`, `StateIntegrationTest.backgroundDuringListeningAndSpeakingReturnsToIdle`
+- Offline and an invalid key reach Alert, then Idle: automated. `StateIntegrationTest.offlineFailureEntersAlertThenIdle`, `StateIntegrationTest.failureDuringThinkingEntersAlertThenIdle`
+- Memory off sends no facts; delete local data clears history, memories, and the key: automated. `UserMemoryViewModelTest.switchDefaultsOffAndMemoryStaysOutOfChat`, `PrivacyTest.deleteLocalDataRemovesHistoryMemoriesAndTheKey`
+- Recognizer, visualizer, and text-to-speech are released on clear and on background: automated. `SessionReleaseTest.recognizerVisualizerAndSpeechReleaseOnClearAndBackground`
+
 ## Build
 
 ```bash

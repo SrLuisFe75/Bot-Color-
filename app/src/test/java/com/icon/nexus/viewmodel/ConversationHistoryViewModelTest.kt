@@ -110,6 +110,25 @@ class ConversationHistoryViewModelTest {
     }
 
     @Test
+    fun twoTurnsInOneConversationKeepOrder() = runBlocking {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val repo = RecordingConversationRepository()
+        val gemini = OrderedGemini()
+        val viewModel = liveViewModel(repo, gemini)
+        viewModel.sendText("one")
+        viewModel.sendText("two")
+        val messages = repo.list().single().messages
+        assertEquals(listOf("one", "First.", "two", "Second."), messages.map { it.text })
+        assertEquals(
+            listOf(Author.User, Author.Assistant, Author.User, Author.Assistant),
+            messages.map { it.author },
+        )
+        assertEquals(emptyList<String>(), gemini.histories[0])
+        assertEquals(listOf("one", "First."), gemini.histories[1])
+        assertEquals(AppState.Idle, viewModel.appState.value)
+    }
+
+    @Test
     fun partialIconTextUpdatesTheSameRow() = runBlocking {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val repo = RecordingConversationRepository()
@@ -193,6 +212,21 @@ class ConversationHistoryViewModelTest {
             messages += Message("icon-$id", Author.Assistant, icon, 1L, startedAt + 1)
         }
         return Conversation(id = id, startedAt = startedAt, messages = messages)
+    }
+}
+
+private class OrderedGemini : AIProvider {
+    val histories = mutableListOf<List<String>>()
+    private var calls = 0
+
+    override val id: String = "gemini"
+
+    override fun streamReply(request: AIRequest): Flow<AIEvent> = flow {
+        calls += 1
+        histories += request.history.map { it.text }
+        val reply = if (calls == 1) "First." else "Second."
+        emit(AIEvent.Token(reply))
+        emit(AIEvent.Completed(request.turnId))
     }
 }
 

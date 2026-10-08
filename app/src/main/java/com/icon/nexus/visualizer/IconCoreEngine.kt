@@ -112,7 +112,7 @@ class IconCoreEngine : VisualizerEngine {
         drawRings(canvas, cx, cy)
         val speaking = appState is AppState.Speaking
         val calm = amplitude < VOICE_FLOOR
-        val nucleusScale = nucleusScale(appState, speaking, calm)
+        val nucleusScale = nucleusScale(appState, speaking)
         val nucleusRadius = minExtent * 0.16f * nucleusScale
         glowPaint.alpha = glowAlpha(appState, speaking, calm)
         nucleusPaint.alpha = nucleusAlpha(appState, speaking, calm)
@@ -146,14 +146,8 @@ class IconCoreEngine : VisualizerEngine {
         }
         breath = (sin(elapsed * TAU / IDLE_BREATH_SECONDS) + 1f) * 0.5f
         val blend = (dt * 1.7f).coerceIn(0f, 1f)
-        val inwardTarget = if (appState is AppState.Listening) 0.76f else 0f
-        val orbitTarget = when (appState) {
-            AppState.Idle -> IDLE_ORBIT
-            is AppState.Listening -> 0.42f
-            is AppState.Thinking -> THINKING_ORBIT
-            is AppState.Speaking -> 0.58f
-            is AppState.Alert -> 0.18f
-        }
+        val inwardTarget = coreInward(appState)
+        val orbitTarget = coreOrbit(appState)
         inward += (inwardTarget - inward) * blend
         orbit += (orbitTarget - orbit) * blend
         var index = 0
@@ -163,11 +157,10 @@ class IconCoreEngine : VisualizerEngine {
         }
     }
 
-    private fun nucleusScale(appState: AppState, speaking: Boolean, calm: Boolean): Float {
+    private fun nucleusScale(appState: AppState, speaking: Boolean): Float {
         val breathScale = 0.96f + 0.08f * breath
         return when {
-            speaking && !calm -> 0.84f + 0.48f * amplitude
-            speaking -> breathScale
+            speaking -> speakingNucleusScale(amplitude, breath)
             appState is AppState.Listening -> 1.06f
             appState is AppState.Thinking -> 1.0f + 0.03f * sin(breath * TAU)
             appState is AppState.Alert -> 1.0f
@@ -219,13 +212,7 @@ class IconCoreEngine : VisualizerEngine {
     }
 
     private fun drawMotes(canvas: Canvas, cx: Float, cy: Float, appState: AppState, dt: Float) {
-        val energy = when (appState) {
-            AppState.Idle -> 0.28f
-            is AppState.Listening -> 0.85f
-            is AppState.Thinking -> 0.62f
-            is AppState.Speaking -> 0.40f + 0.60f * amplitude
-            is AppState.Alert -> 0.34f
-        }
+        val energy = coreMoteEnergy(appState, amplitude)
         val reach = minExtent * 0.46f
         var index = 0
         val items = motes.motes
@@ -451,3 +438,48 @@ private val CORE_NORMAL = intArrayOf(0xFFF4FEFF.toInt(), 0xFF8AF3FF.toInt(), 0x0
 private val GLOW_NORMAL = intArrayOf(0x668AF3FF, 0x2248D4EA, 0x0048D4EA)
 private val CORE_ALERT = intArrayOf(0xFFFFF6E8.toInt(), IconPalette.AMBER, 0x00C6A36A)
 private val GLOW_ALERT = intArrayOf(0x66C6A36A, 0x22C6A36A, 0x00C6A36A)
+
+/**
+ * Orbit speed for one [AppState]. The five states do not share a speed.
+ */
+fun coreOrbit(state: AppState): Float = when (state) {
+    AppState.Idle -> IDLE_ORBIT
+    is AppState.Listening -> 0.42f
+    is AppState.Thinking -> THINKING_ORBIT
+    is AppState.Speaking -> 0.58f
+    is AppState.Alert -> 0.18f
+}
+
+/**
+ * How far motes pull toward the nucleus. Only Listening pulls inward.
+ */
+fun coreInward(state: AppState): Float = if (state is AppState.Listening) 0.76f else 0f
+
+/**
+ * Mote brightness for one [AppState]. Speaking rises with [amplitude].
+ */
+fun coreMoteEnergy(state: AppState, amplitude: Float): Float {
+    val level = amplitude.coerceIn(0f, 1f)
+    return when (state) {
+        AppState.Idle -> 0.28f
+        is AppState.Listening -> 0.85f
+        is AppState.Thinking -> 0.62f
+        is AppState.Speaking -> 0.40f + 0.60f * level
+        is AppState.Alert -> 0.34f
+    }
+}
+
+/**
+ * True when the core uses the amber alert palette.
+ */
+fun coreUsesAlertPalette(state: AppState): Boolean = state is AppState.Alert
+
+/**
+ * Speaking nucleus size. Below the voice floor the slow breath is used.
+ * At and above that floor the size grows with [amplitude].
+ */
+fun speakingNucleusScale(amplitude: Float, breath: Float): Float {
+    val level = amplitude.coerceIn(0f, 1f)
+    val breathScale = 0.96f + 0.08f * breath
+    return if (level < VOICE_FLOOR) breathScale else 0.84f + 0.48f * level
+}

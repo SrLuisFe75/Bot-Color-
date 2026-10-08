@@ -168,6 +168,31 @@ class StateIntegrationTest {
     }
 
     @Test
+    fun offlineFailureEntersAlertThenIdle() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val viewModel = integrationViewModel(
+            speech = IntegrationSpeech(),
+            synth = IntegrationSynth(),
+            gemini = object : AIProvider {
+                override val id: String = "gemini"
+                override fun streamReply(request: AIRequest): Flow<AIEvent> = flow {
+                    emit(AIEvent.Failed(GeminiMessages.OFFLINE))
+                }
+            },
+        )
+        viewModel.sendText("Hi")
+        runCurrent()
+        val alert = viewModel.appState.value as AppState.Alert
+        assertEquals(GeminiMessages.OFFLINE, alert.message)
+        advanceTimeBy(FAILURE_ALERT_MILLIS - 1)
+        runCurrent()
+        assertEquals(alert, viewModel.appState.value)
+        advanceTimeBy(1)
+        runCurrent()
+        assertEquals(AppState.Idle, viewModel.appState.value)
+    }
+
+    @Test
     fun backgroundDuringListeningAndSpeakingReturnsToIdle() = runBlocking {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val speech = IntegrationSpeech()
