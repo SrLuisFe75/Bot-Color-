@@ -41,6 +41,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.icon.nexus.audio.SpeechMessages
+import com.icon.nexus.language.LANGUAGE_SUPPORT
 import com.icon.nexus.camera.CameraTour
 import com.icon.nexus.domain.AppState
 import com.icon.nexus.visualizer.IconCoreScene
@@ -145,6 +146,15 @@ fun MainScreen(
                         )
                     }
                 }
+                Text(
+                    text = LANGUAGE_SUPPORT,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.48f),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .padding(top = 6.dp)
+                        .semantics { contentDescription = LANGUAGE_SUPPORT },
+                )
                 if (!demoMode && !alertMessage.isNullOrBlank()) {
                     Text(
                         text = alertMessage,

@@ -8,6 +8,9 @@ import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import com.icon.nexus.language.ENGLISH_TAG
+import com.icon.nexus.language.SPANISH_TAG
+import com.icon.nexus.language.recognitionPlan
 
 /**
  * One-shot [SpeechRecognizer]. The recognizer is created and destroyed on
@@ -123,7 +126,18 @@ class RecognizerSpeechInput(
                 RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                 RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
             )
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, resolvedLanguageTag(languageTag))
+            val plan = recognitionPlan(languageTag)
+            val pin = plan.pinLanguage
+            if (pin != null) {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, pin)
+            }
+            if (plan.detectLanguage) {
+                putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_DETECTION, true)
+                putExtra(
+                    RecognizerIntent.EXTRA_LANGUAGE_DETECTION_ALLOWED_LANGUAGES,
+                    arrayListOf(SPANISH_TAG, ENGLISH_TAG),
+                )
+            }
             putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)

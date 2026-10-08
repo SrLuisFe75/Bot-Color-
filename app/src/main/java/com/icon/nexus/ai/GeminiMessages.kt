@@ -1,6 +1,7 @@
 package com.icon.nexus.ai
 
 import com.icon.nexus.domain.resolvedPersona
+import com.icon.nexus.language.ReplyLanguage
 import java.io.IOException
 import java.io.InterruptedIOException
 import java.net.SocketTimeoutException
@@ -19,6 +20,8 @@ internal fun geminiSystemInstruction(
     name: String,
     personality: String,
     memories: List<String> = emptyList(),
+    replyLanguage: ReplyLanguage? = null,
+    followLatest: Boolean = false,
 ): String {
     val persona = resolvedPersona(name, personality)
     val resolvedName = persona.name
@@ -42,7 +45,25 @@ internal fun geminiSystemInstruction(
                 append(' ')
             }
         }
+        if (replyLanguage != null) {
+            append(' ')
+            append(replyInstruction(replyLanguage, followLatest))
+        }
     }.trimEnd()
+}
+
+internal fun replyInstruction(language: ReplyLanguage, followLatest: Boolean): String {
+    val line = when (language) {
+        ReplyLanguage.Spanish -> "Reply in Spanish."
+        ReplyLanguage.English -> "Reply in English."
+    }
+    val translate = " Do not translate unless the user asks."
+    val latest = if (followLatest) {
+        " Keep the earlier conversation and follow the language of the latest user message."
+    } else {
+        ""
+    }
+    return line + translate + latest
 }
 
 internal fun geminiFailureMessage(httpCode: Int?, error: Throwable?): String {

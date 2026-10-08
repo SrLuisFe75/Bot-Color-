@@ -45,10 +45,13 @@ class PresenceStyleTest {
     }
 
     @Test
-    fun alertUsesAmberAndIsDistinctFromTheCyanCore() {
+    fun alertUsesVioletAndIsDistinctFromTheCyanCore() {
         val alert = presenceStyleFor(AppState.Alert("notice"))
         assertTrue(alert.alert)
-        assertEquals(IconPalette.AMBER and 0xFFFFFF, alert.ringColor and 0xFFFFFF)
+        assertEquals(IconPalette.VIOLET and 0xFFFFFF, alert.ringColor and 0xFFFFFF)
+        assertTrue((alert.ringColor and 0xFFFFFF) != 0xC6A36A)
+        assertTrue((alert.coreColor and 0xFFFFFF) != 0xC6A36A)
+        assertTrue((alert.glowColor and 0xFFFFFF) != 0xC6A36A)
         assertTrue(alert.coreColor != IconPalette.CORE)
         assertTrue(alert.inward == 0f)
         assertFalse(presenceStyleFor(AppState.Idle).alert)

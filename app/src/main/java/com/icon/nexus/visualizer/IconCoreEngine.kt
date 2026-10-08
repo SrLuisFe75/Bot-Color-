@@ -25,7 +25,6 @@ import com.icon.nexus.camera.CinematicCamera
 import com.icon.nexus.camera.ShotPlanner
 import com.icon.nexus.domain.AppState
 import com.icon.nexus.domain.VisualThemeId
-import com.icon.nexus.ui.theme.IconPalette
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,14 +34,13 @@ import kotlin.math.sin
 
 /**
  * Draws [IconCoreTheme] on a full-bleed canvas. Motes, paints, and the oval
- * path are allocated once. Gradients are rebuilt only when the size or the
- * alert palette changes.
+ * path are allocated once. Gradients are rebuilt only when the size changes.
  *
- * Idle breathes slowly at low energy. Listening pulls motes inward and
- * brightens the core. Thinking speeds the orbits without a spinner. Speaking
- * sizes the nucleus and glow from [audioLevel], and uses the slow breath only
- * when that level is near zero. Alert swaps in an amber core and a separate
- * outer amber ring.
+ * Idle breathes slowly in deep blue and indigo. Listening pulls motes inward
+ * and expands the core. Thinking keeps violet orbits without a spinner.
+ * Speaking colors follow the smoothed audio level. Alert pulses violet and
+ * cyan with white highlights. Colors blend across states. Shaders are rebuilt
+ * only when the canvas size changes.
  */
 class IconCoreEngine(
     memoryClassMb: Int = IconCoreTheme.LOW_HEAP_CLASS_MB,
@@ -69,8 +67,13 @@ class IconCoreEngine(
     private val ringSpin = FloatArray(RING_COUNT)
     private var cachedW = -1
     private var cachedH = -1
-    private var cachedAlert = false
     private var minExtent = 0f
+    private var fromLook = CoreLooks.IDLE
+    private var toLook = CoreLooks.IDLE
+    private var lookMix = 1f
+    private val fieldShaders = arrayOfNulls<Shader>(CoreLooks.COUNT)
+    private val nucleusShaders = arrayOfNulls<Shader>(CoreLooks.COUNT)
+    private val glowShaders = arrayOfNulls<Shader>(CoreLooks.COUNT)
 
     override fun applyTheme(theme: VisualizerTheme) {
         val resolved = VisualizerThemes.forId(theme.id)
@@ -99,33 +102,36 @@ class IconCoreEngine(
         if (width < 1f || height < 1f) return
         val dt = advance(nowNanos)
         step(appState, dt)
-        val alert = appState is AppState.Alert
-        syncShaders(width, height, alert)
+        syncShaders(width, height)
         val cx = width * 0.5f
         val cy = height * 0.5f
         val shiftX = camera.panX * minExtent
         val shiftY = camera.panY * minExtent
         canvas.save()
         canvas.translate(shiftX * FIELD_PARALLAX, shiftY * FIELD_PARALLAX)
-        canvas.drawRect(-width, -height, width * 2f, height * 2f, fieldPaint)
+        drawField(canvas, width, height)
         canvas.restore()
         canvas.save()
         canvas.translate(cx + shiftX, cy + shiftY)
         canvas.scale(camera.zoom, camera.zoom)
         canvas.translate(-cx, -cy)
+        motePaint.color = blendedColor(CoreLooks.mote, CoreLooks.mote[CoreLooks.SPEAKING], CoreLooks.mote[CoreLooks.SPEAKING_CYAN])
         drawMotes(canvas, cx, cy, appState, dt)
+        ringPaint.color = blendedColor(CoreLooks.ring, CoreLooks.ring[CoreLooks.SPEAKING], CoreLooks.ring[CoreLooks.SPEAKING_CYAN])
         drawRings(canvas, cx, cy)
         val speaking = appState is AppState.Speaking
         val calm = amplitude < VOICE_FLOOR
         val nucleusScale = nucleusScale(appState, speaking)
         val nucleusRadius = minExtent * 0.16f * nucleusScale
-        glowPaint.alpha = glowAlpha(appState, speaking, calm)
-        nucleusPaint.alpha = nucleusAlpha(appState, speaking, calm)
-        canvas.drawCircle(cx, cy, nucleusRadius * 2.35f, glowPaint)
-        canvas.drawCircle(cx, cy, nucleusRadius, nucleusPaint)
-        if (alert) {
+        val glowEnergy = glowAlpha(appState, speaking, calm)
+        val nucleusEnergy = nucleusAlpha(appState, speaking, calm)
+        drawLayer(canvas, glowPaint, glowShaders, glowEnergy, cx, cy, nucleusRadius * 2.35f)
+        drawLayer(canvas, nucleusPaint, nucleusShaders, nucleusEnergy, cx, cy, nucleusRadius)
+        val alertCover = coverOf(CoreLooks.ALERT)
+        if (alertCover > 0.004f) {
+            alertRingPaint.color = CoreLooks.ALERT_RING
             alertRingPaint.strokeWidth = minExtent * 0.012f
-            alertRingPaint.alpha = (150 + 55f * breath).toInt().coerceIn(0, 255)
+            alertRingPaint.alpha = ((170f + 85f * breath) * alertCover).toInt().coerceIn(0, 255)
             canvas.drawCircle(cx, cy, minExtent * 0.78f, alertRingPaint)
         }
         canvas.restore()
@@ -150,6 +156,7 @@ class IconCoreEngine(
             (lastNanos - startNanos).toFloat() / 1_000_000_000f
         }
         breath = (sin(elapsed * TAU / IDLE_BREATH_SECONDS) + 1f) * 0.5f
+        advanceLook(appState, dt)
         val blend = (dt * 1.7f).coerceIn(0f, 1f)
         val inwardTarget = coreInward(appState)
         val orbitTarget = coreOrbit(appState)
@@ -166,7 +173,7 @@ class IconCoreEngine(
         val breathScale = 0.96f + 0.08f * breath
         return when {
             speaking -> speakingNucleusScale(amplitude, breath)
-            appState is AppState.Listening -> 1.06f
+            appState is AppState.Listening -> LISTENING_CORE_SCALE
             appState is AppState.Thinking -> 1.0f + 0.03f * sin(breath * TAU)
             appState is AppState.Alert -> 1.0f
             else -> breathScale
@@ -234,47 +241,151 @@ class IconCoreEngine(
         }
     }
 
-    private fun syncShaders(width: Float, height: Float, alert: Boolean) {
+    private fun coreLookIndex(state: AppState): Int = when (state) {
+        AppState.Idle -> CoreLooks.IDLE
+        is AppState.Listening -> CoreLooks.LISTENING
+        is AppState.Thinking -> CoreLooks.THINKING
+        is AppState.Speaking -> CoreLooks.SPEAKING
+        is AppState.Alert -> CoreLooks.ALERT
+    }
+
+    private fun advanceLook(appState: AppState, dt: Float) {
+        val next = coreLookIndex(appState)
+        if (next != toLook) {
+            fromLook = toLook
+            toLook = next
+            lookMix = 0f
+        }
+        if (lookMix < 1f) {
+            lookMix = (lookMix + dt / LOOK_BLEND_SECONDS).coerceAtMost(1f)
+            if (lookMix >= 1f) fromLook = toLook
+        }
+    }
+
+    private fun coverOf(slot: Int): Float {
+        val blending = fromLook != toLook && lookMix < 1f
+        if (!blending) return if (toLook == slot) 1f else 0f
+        var cover = 0f
+        if (fromLook == slot) cover += 1f - lookMix
+        if (toLook == slot) cover += lookMix
+        return cover
+    }
+
+    private fun blendedColor(colors: IntArray, speakQuiet: Int, speakLoud: Int): Int {
+        val from = colorFor(fromLook, colors, speakQuiet, speakLoud)
+        val to = colorFor(toLook, colors, speakQuiet, speakLoud)
+        val mix = if (fromLook == toLook) 1f else lookMix
+        return lerpArgb(from, to, mix)
+    }
+
+    private fun colorFor(slot: Int, colors: IntArray, speakQuiet: Int, speakLoud: Int): Int {
+        if (slot == CoreLooks.SPEAKING) return lerpArgb(speakQuiet, speakLoud, amplitude)
+        return colors[slot]
+    }
+
+    private fun drawField(canvas: Canvas, width: Float, height: Float) {
+        val blending = fromLook != toLook && lookMix < 1f
+        if (blending) paintField(canvas, width, height, fromLook, 1f)
+        paintField(canvas, width, height, toLook, if (blending) lookMix else 1f)
+    }
+
+    private fun paintField(canvas: Canvas, width: Float, height: Float, slot: Int, cover: Float) {
+        if (slot == CoreLooks.SPEAKING) {
+            val loud = amplitude.coerceIn(0f, 1f)
+            if (blit(fieldPaint, fieldShaders[CoreLooks.SPEAKING], cover * (1f - loud), 255)) {
+                canvas.drawRect(-width, -height, width * 2f, height * 2f, fieldPaint)
+            }
+            if (blit(fieldPaint, fieldShaders[CoreLooks.SPEAKING_CYAN], cover * loud, 255)) {
+                canvas.drawRect(-width, -height, width * 2f, height * 2f, fieldPaint)
+            }
+        } else if (blit(fieldPaint, fieldShaders[slot], cover, 255)) {
+            canvas.drawRect(-width, -height, width * 2f, height * 2f, fieldPaint)
+        }
+    }
+
+    private fun drawLayer(
+        canvas: Canvas,
+        paint: Paint,
+        shaders: Array<Shader?>,
+        energy: Int,
+        cx: Float,
+        cy: Float,
+        radius: Float,
+    ) {
+        val blending = fromLook != toLook && lookMix < 1f
+        if (blending) paintCircle(canvas, paint, shaders, fromLook, 1f, energy, cx, cy, radius)
+        paintCircle(canvas, paint, shaders, toLook, if (blending) lookMix else 1f, energy, cx, cy, radius)
+    }
+
+    private fun paintCircle(
+        canvas: Canvas,
+        paint: Paint,
+        shaders: Array<Shader?>,
+        slot: Int,
+        cover: Float,
+        energy: Int,
+        cx: Float,
+        cy: Float,
+        radius: Float,
+    ) {
+        if (slot == CoreLooks.SPEAKING) {
+            val loud = amplitude.coerceIn(0f, 1f)
+            if (blit(paint, shaders[CoreLooks.SPEAKING], cover * (1f - loud), energy)) {
+                canvas.drawCircle(cx, cy, radius, paint)
+            }
+            if (blit(paint, shaders[CoreLooks.SPEAKING_CYAN], cover * loud, energy)) {
+                canvas.drawCircle(cx, cy, radius, paint)
+            }
+        } else if (blit(paint, shaders[slot], cover, energy)) {
+            canvas.drawCircle(cx, cy, radius, paint)
+        }
+    }
+
+    private fun blit(paint: Paint, shader: Shader?, cover: Float, energy: Int): Boolean {
+        if (cover < 0.004f || shader == null) return false
+        paint.shader = shader
+        paint.alpha = (cover * energy).toInt().coerceIn(0, 255)
+        return paint.alpha > 0
+    }
+
+    private fun syncShaders(width: Float, height: Float) {
         val w = width.toInt()
         val h = height.toInt()
-        if (w == cachedW && h == cachedH && alert == cachedAlert) return
+        if (w == cachedW && h == cachedH && fieldShaders[0] != null) return
         cachedW = w
         cachedH = h
-        cachedAlert = alert
         minExtent = min(width, height)
         val cx = width * 0.5f
         val cy = height * 0.5f
         val extent = minExtent
-        fieldPaint.shader = RadialGradient(
-            cx,
-            cy,
-            extent * 0.72f,
-            if (alert) FIELD_ALERT else FIELD_CORE,
-            GRADIENT_STOPS,
-            Shader.TileMode.CLAMP,
-        )
-        val core = if (alert) CORE_ALERT else CORE_NORMAL
-        val glow = if (alert) GLOW_ALERT else GLOW_NORMAL
-        nucleusPaint.shader = RadialGradient(
-            cx,
-            cy,
-            extent * 0.20f,
-            core,
-            GRADIENT_STOPS,
-            Shader.TileMode.CLAMP,
-        )
-        glowPaint.shader = RadialGradient(
-            cx,
-            cy,
-            extent * 0.42f,
-            glow,
-            GRADIENT_STOPS,
-            Shader.TileMode.CLAMP,
-        )
-        val ring = if (alert) IconPalette.AMBER else IconPalette.CYAN
-        ringPaint.color = ring
-        motePaint.color = if (alert) IconPalette.AMBER else 0xFFD9FBFF.toInt()
-        alertRingPaint.color = IconPalette.AMBER
+        var index = 0
+        while (index < CoreLooks.COUNT) {
+            fieldShaders[index] = RadialGradient(
+                cx,
+                cy,
+                extent * 0.72f,
+                CoreLooks.field[index],
+                GRADIENT_STOPS,
+                Shader.TileMode.CLAMP,
+            )
+            nucleusShaders[index] = RadialGradient(
+                cx,
+                cy,
+                extent * 0.20f,
+                CoreLooks.nucleus[index],
+                GRADIENT_STOPS,
+                Shader.TileMode.CLAMP,
+            )
+            glowShaders[index] = RadialGradient(
+                cx,
+                cy,
+                extent * 0.42f,
+                CoreLooks.glow[index],
+                GRADIENT_STOPS,
+                Shader.TileMode.CLAMP,
+            )
+            index += 1
+        }
     }
 }
 
@@ -517,12 +628,20 @@ private val RING_STROKE = floatArrayOf(0.007f, 0.005f, 0.0035f)
 private val SPIN_DEGREES = floatArrayOf(18f, -32f, 8f)
 private val GRADIENT_STOPS = floatArrayOf(0f, 0.45f, 1f)
 
-private val FIELD_CORE = intArrayOf(0xFF241C4A.toInt(), 0xFF100C24.toInt(), 0xFF070614.toInt())
-private val FIELD_ALERT = intArrayOf(0xFF3A2A18.toInt(), 0xFF140E18.toInt(), 0xFF070614.toInt())
-private val CORE_NORMAL = intArrayOf(0xFFF4FEFF.toInt(), 0xFF8AF3FF.toInt(), 0x008AF3FF)
-private val GLOW_NORMAL = intArrayOf(0x668AF3FF, 0x2248D4EA, 0x0048D4EA)
-private val CORE_ALERT = intArrayOf(0xFFFFF6E8.toInt(), IconPalette.AMBER, 0x00C6A36A)
-private val GLOW_ALERT = intArrayOf(0x66C6A36A, 0x22C6A36A, 0x00C6A36A)
+private const val LOOK_BLEND_SECONDS = 0.85f
+const val LISTENING_CORE_SCALE = 1.08f
+
+private fun lerpArgb(from: Int, to: Int, amount: Float): Int {
+    val t = amount.coerceIn(0f, 1f)
+    if (t <= 0f) return from
+    if (t >= 1f) return to
+    val inv = 1f - t
+    val a = (((from ushr 24) and 0xFF) * inv + ((to ushr 24) and 0xFF) * t).toInt()
+    val r = (((from ushr 16) and 0xFF) * inv + ((to ushr 16) and 0xFF) * t).toInt()
+    val g = (((from ushr 8) and 0xFF) * inv + ((to ushr 8) and 0xFF) * t).toInt()
+    val b = ((from and 0xFF) * inv + (to and 0xFF) * t).toInt()
+    return (a shl 24) or (r shl 16) or (g shl 8) or b
+}
 
 /**
  * Orbit speed for one [AppState]. The five states do not share a speed.
@@ -550,12 +669,12 @@ fun coreMoteEnergy(state: AppState, amplitude: Float): Float {
         is AppState.Listening -> 0.85f
         is AppState.Thinking -> 0.62f
         is AppState.Speaking -> 0.40f + 0.60f * level
-        is AppState.Alert -> 0.34f
+        is AppState.Alert -> 0.72f
     }
 }
 
 /**
- * True when the core uses the amber alert palette.
+ * True when the core uses the alert palette.
  */
 fun coreUsesAlertPalette(state: AppState): Boolean = state is AppState.Alert
 

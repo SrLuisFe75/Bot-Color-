@@ -113,6 +113,8 @@ class GeminiProvider(
                         name = request.persona.name,
                         personality = request.persona.personality,
                         memories = request.memories,
+                        replyLanguage = request.replyLanguage,
+                        followLatest = request.followLatestLanguage,
                     ),
                 ),
             ),

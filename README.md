@@ -60,7 +60,7 @@ The cinematic control plays a live camera over ICON CORE for about 30 seconds. T
 
 ## Phase 14
 
-Settings is one screen in the ICON theme, opened from the settings control. The presence stays home. ICON stores the assistant name and personality, and empty values fall back to the defaults in the system instruction. Voice stores speech rate, volume, and a language tag for Android text-to-speech and the recognizer. AI stores Demo or Gemini, the model, and a masked API key in the existing encrypted settings. Demo still runs the local timeline and does not call Gemini. Visual keeps ICON CORE as the only scene, scales the voice level by visual sensitivity, and Show conversation still controls the transcript. Memory opens the existing memory screen. About shows the name and the app version. Privacy on that screen says what stays on the device and what a Gemini turn sends.
+Settings is one screen in the ICON theme, opened from the settings control. The presence stays home. ICON stores the assistant name and personality, and empty values fall back to the defaults in the system instruction. Voice stores speech rate, volume, and a language: Auto, Español, or English. Auto is the default and does not pin the recognizer to one language. Español and English pin recognition and speech, and Gemini is told to reply in that language. AI stores Demo or Gemini, the model, and a masked API key in the existing encrypted settings. Demo still runs the local timeline and does not call Gemini. Visual keeps ICON CORE as the only scene, scales the voice level by visual sensitivity, and Show conversation still controls the transcript. Memory opens the existing memory screen. About shows the name and the app version. Privacy on that screen says what stays on the device and what a Gemini turn sends.
 
 ## Phase 15
 
@@ -77,6 +77,8 @@ Verification only. The checks below name the JVM tests that already covered each
 ## Phase 18
 
 Performance. A heap class below 128 MB allocates 24 motes once; 128 MB and above allocate 48. Paints, the oval path, and shaders are not created on each frame. Room queries and Gemini requests stay off the main thread. Leaving the screen still releases the visualizer, speech, the recognizer, and the in-flight turn.
+
+ICON CORE uses electric blue, deep blue, indigo, violet, luminous cyan, and white highlights. Alert pulses violet and cyan. Amber is not the alert color. Colors blend between states. Auto, Español, and English are pipeline languages: Español and English pin recognition, speech, and the Gemini reply; Auto detects Spanish or English from the latest text and follows that language on the next turn.
 
 ## Verification
 
@@ -178,7 +180,7 @@ Delete local data, en PRIVACY, pide confirmación. Borra las conversaciones y la
 
 Proveedor: Settings, AI, Demo o Gemini. Demo usa la línea de tiempo local. Gemini usa la clave y el modelo de esa pantalla.
 
-Voz: Settings, VOICE. Speech rate (0,25 a 2), Volume (0 a 1) y Language. Un idioma vacío usa el del dispositivo. Sirven para el TTS y para el reconocedor.
+Voz: Settings, VOICE. Speech rate (0,25 a 2), Volume (0 a 1), y Auto, Español o English. Auto es el valor por defecto y no fija el reconocedor a un solo idioma: detecta español o inglés en el texto y Gemini responde en ese idioma. Español e English fijan el reconocimiento, la voz y la respuesta. Un turno posterior conserva el contexto y sigue el idioma del último mensaje.
 
 Visualizador: solo ICON CORE dibuja la escena. En VISUAL se lee “ICON CORE”; Visual sensitivity escala el nivel de voz, y Show conversation decide si la transcripción empieza visible. Los identificadores `Nexus`, `Aurora` y `Ember` existen, pero `VisualizerThemes.forId` los resuelve todos a `IconCoreTheme`. No hay un segundo renderizador. Para añadir otro tema haría falta un objeto que implemente `VisualizerTheme` y devolverlo desde `forId` para ese `VisualThemeId`, y dibujarlo en el motor. Hoy el motor dibuja ICON CORE.
 

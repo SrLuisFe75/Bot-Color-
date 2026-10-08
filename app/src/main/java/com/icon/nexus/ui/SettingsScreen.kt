@@ -111,16 +111,9 @@ fun SettingsScreen(
             value = voiceVolume,
             onValue = { value -> scope.launch { viewModel.setVoiceVolume(value) } },
         )
-        OutlinedTextField(
-            value = languageTag,
-            onValueChange = { value -> scope.launch { viewModel.setLanguageTag(value) } },
-            modifier = Modifier
-                .fillMaxWidth()
-                .semantics { contentDescription = "Language" },
-            singleLine = true,
-            textStyle = MaterialTheme.typography.bodyMedium,
-            label = { Text("Language") },
-            placeholder = { Text("Device language") },
+        LanguageChoices(
+            languageTag = languageTag,
+            onLanguage = { value -> scope.launch { viewModel.setLanguageTag(value) } },
         )
         Category("AI")
         ProviderChoice(

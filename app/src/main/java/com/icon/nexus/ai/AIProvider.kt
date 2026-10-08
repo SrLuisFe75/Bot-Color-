@@ -2,6 +2,7 @@ package com.icon.nexus.ai
 
 import com.icon.nexus.domain.AssistantPersona
 import com.icon.nexus.domain.Message
+import com.icon.nexus.language.ReplyLanguage
 import kotlinx.coroutines.flow.Flow
 
 data class AIRequest(
@@ -10,6 +11,8 @@ data class AIRequest(
     val history: List<Message>,
     val userText: String,
     val memories: List<String> = emptyList(),
+    val replyLanguage: ReplyLanguage? = null,
+    val followLatestLanguage: Boolean = false,
 )
 
 sealed interface AIEvent {

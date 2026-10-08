@@ -253,16 +253,9 @@ private fun VoiceStep(
         text = "Voice",
         style = MaterialTheme.typography.headlineSmall,
     )
-    OutlinedTextField(
-        value = languageTag,
-        onValueChange = onLanguage,
-        modifier = Modifier
-            .fillMaxWidth()
-            .semantics { contentDescription = "Language" },
-        singleLine = true,
-        textStyle = MaterialTheme.typography.bodyMedium,
-        label = { Text("Language") },
-        placeholder = { Text("Device language") },
+    LanguageChoices(
+        languageTag = languageTag,
+        onLanguage = onLanguage,
     )
     Text(
         text = VOICE_PREVIEW_SENTENCE,

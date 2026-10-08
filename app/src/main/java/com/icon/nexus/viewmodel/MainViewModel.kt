@@ -47,6 +47,10 @@ import com.icon.nexus.domain.AppState
 import com.icon.nexus.domain.AppStateMachine
 import com.icon.nexus.domain.Author
 import com.icon.nexus.domain.resolvedPersona
+import com.icon.nexus.language.LanguageChoice
+import com.icon.nexus.language.ReplyLanguage
+import com.icon.nexus.language.languageChoice
+import com.icon.nexus.language.replyLanguageFor
 import com.icon.nexus.domain.Conversation
 import com.icon.nexus.domain.Message
 import com.icon.nexus.domain.StateTransition
@@ -169,6 +173,8 @@ class MainViewModel(
 
     private val languageTagInternal = MutableStateFlow(initialSettings.languageTag)
     val languageTag: StateFlow<String> = languageTagInternal.asStateFlow()
+    private var lastReplyLanguage = ReplyLanguage.English
+    private var voiceOverridden = false
 
     private val visualSensitivityInternal = MutableStateFlow(initialSettings.visualSensitivity)
     val visualSensitivity: StateFlow<Float> = visualSensitivityInternal.asStateFlow()
@@ -953,6 +959,7 @@ class MainViewModel(
     private fun maybeFinishSpeech(turnId: Long) {
         if (turnId != speechTurnId || !replyFinished || pendingUtterances > 0) return
         if (appStateInternal.value is AppState.Speaking && ownsTurn(turnId)) {
+            restoreAutoVoice()
             dispatch(StateTransition.ToIdle)
         }
     }
@@ -964,7 +971,18 @@ class MainViewModel(
         replyFinished = false
         sentenceBuffer.clear()
         releasePlayback(resetLevel = !demoModeInternal.value)
+        restoreAutoVoice()
         synthesizer.stop()
+    }
+
+    private fun restoreAutoVoice() {
+        if (!voiceOverridden) return
+        voiceOverridden = false
+        synthesizer.applyVoice(
+            voiceRateInternal.value,
+            voiceVolumeInternal.value,
+            languageTagInternal.value,
+        )
     }
 
     /**
@@ -1083,6 +1101,13 @@ class MainViewModel(
             if (chatGeneration.get() != generation || !ownsTurn(turnId)) return
             val persona = resolvedPersona(current.personaName, current.personality)
             val facts = rememberedFacts(memory.isEnabled(), memory.list())
+            val reply = replyLanguageFor(current.languageTag, text, lastReplyLanguage)
+            val followLatest = languageChoice(current.languageTag) == LanguageChoice.Auto
+            if (reply != null) lastReplyLanguage = reply
+            if (followLatest && reply != null) {
+                voiceOverridden = true
+                synthesizer.applyVoice(current.voiceRate, current.voiceVolume, reply.tag)
+            }
             gemini.streamReply(
                 AIRequest(
                     turnId = turnId,
@@ -1090,6 +1115,8 @@ class MainViewModel(
                     history = history,
                     userText = text,
                     memories = facts,
+                    replyLanguage = reply,
+                    followLatestLanguage = followLatest && reply != null,
                 ),
             ).collect { event ->
                 if (chatGeneration.get() != generation || !ownsTurn(turnId)) return@collect

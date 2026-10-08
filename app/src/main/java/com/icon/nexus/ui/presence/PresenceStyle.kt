@@ -81,9 +81,9 @@ private val SpeakingPresence = PresenceStyle(
 )
 
 private val AlertPresence = PresenceStyle(
-    coreColor = 0xFFF4E7CC.toInt(),
-    ringColor = 0xD0C6A36A.toInt(),
-    glowColor = 0x55C6A36A.toInt(),
+    coreColor = IconPalette.HIGHLIGHT,
+    ringColor = IconPalette.VIOLET,
+    glowColor = 0x668AF3FF,
     breathPeriodMillis = 2800,
     scaleMin = 0.985f,
     scaleMax = 1.035f,
