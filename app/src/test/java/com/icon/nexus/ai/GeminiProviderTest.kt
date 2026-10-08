@@ -198,9 +198,30 @@ class GeminiProviderTest {
         return FakeSettingsRepository(AppSettings.defaults().copy(apiKey = "secret-test-key"))
     }
 
+    @Test
+    fun memoriesStayInTheSystemInstruction() = runBlocking {
+        val server = MockWebServer()
+        server.enqueue(sse("Ok."))
+        server.start()
+        try {
+            provider(keyedSettings(), server).streamReply(
+                sampleRequest("Hello", memories = listOf("I like tea")),
+            ).toList()
+            val body = server.takeRequest().body.readUtf8()
+            assertTrue(body.contains("The user asked you to keep these facts: I like tea."))
+            assertTrue(body.contains("Reply in natural spoken sentences."))
+            assertTrue(body.contains("Do not use Markdown."))
+            assertEquals(1, body.split("I like tea").size - 1)
+            assertTrue(body.contains("Hello"))
+        } finally {
+            server.shutdown()
+        }
+    }
+
     private fun sampleRequest(
         text: String,
         history: List<Message> = emptyList(),
+        memories: List<String> = emptyList(),
     ): AIRequest {
         return AIRequest(
             turnId = 4L,
@@ -210,6 +231,7 @@ class GeminiProviderTest {
             ),
             history = history,
             userText = text,
+            memories = memories,
         )
     }
 

@@ -35,6 +35,11 @@ import com.icon.nexus.data.ConversationSummary
 import com.icon.nexus.data.EncryptedSettingsRepository
 import com.icon.nexus.data.InMemoryConversationRepository
 import com.icon.nexus.data.history.RoomConversationRepository
+import com.icon.nexus.memory.MemoryRepository
+import com.icon.nexus.memory.OffMemoryRepository
+import com.icon.nexus.memory.RoomMemoryRepository
+import com.icon.nexus.memory.UserMemory
+import com.icon.nexus.memory.rememberedFacts
 import com.icon.nexus.data.SettingsRepository
 import com.icon.nexus.domain.AppState
 import com.icon.nexus.domain.AppStateMachine
@@ -92,6 +97,7 @@ class MainViewModel(
     private val liveSpeech: SpeechInput = speechInput,
     private val microphone: MicrophonePermission = MicrophonePermission { true },
     private val playback: PlaybackCapture = UnavailablePlaybackCapture,
+    private val memory: MemoryRepository = OffMemoryRepository,
     private val clock: () -> Long = { System.currentTimeMillis() },
     private val conversationIds: () -> String = { UUID.randomUUID().toString() },
 ) : ViewModel() {
@@ -134,6 +140,12 @@ class MainViewModel(
     private val historyInternal = MutableStateFlow<List<ConversationSummary>>(emptyList())
     val history: StateFlow<List<ConversationSummary>> = historyInternal.asStateFlow()
 
+    private val memoryEnabledInternal = MutableStateFlow(false)
+    val memoryEnabled: StateFlow<Boolean> = memoryEnabledInternal.asStateFlow()
+
+    private val memoriesInternal = MutableStateFlow<List<UserMemory>>(emptyList())
+    val memories: StateFlow<List<UserMemory>> = memoriesInternal.asStateFlow()
+
     private var activeConversationId: String? = null
 
     private var speechTurnId: Long? = null
@@ -169,6 +181,7 @@ class MainViewModel(
             }
         })
         viewModelScope.launch { restoreHistory() }
+        viewModelScope.launch { refreshMemory() }
     }
 
     private val chatGeneration = AtomicInteger(0)
@@ -368,6 +381,34 @@ class MainViewModel(
         if (demoModeInternal.value) return
         viewModelScope.launch {
             conversationMutex.withLock { publishHistory() }
+        }
+    }
+
+    fun setMemoryEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            memory.setEnabled(enabled)
+            refreshMemory()
+        }
+    }
+
+    fun addMemory(raw: String) {
+        viewModelScope.launch {
+            memory.add(raw)
+            refreshMemory()
+        }
+    }
+
+    fun deleteMemory(id: String) {
+        viewModelScope.launch {
+            memory.delete(id)
+            refreshMemory()
+        }
+    }
+
+    fun clearMemories() {
+        viewModelScope.launch {
+            memory.clear()
+            refreshMemory()
         }
     }
 
@@ -789,12 +830,14 @@ class MainViewModel(
                 name = current.personaName,
                 personality = current.personality,
             )
+            val facts = rememberedFacts(memory.isEnabled(), memory.list())
             gemini.streamReply(
                 AIRequest(
                     turnId = turnId,
                     persona = persona,
                     history = history,
                     userText = text,
+                    memories = facts,
                 ),
             ).collect { event ->
                 if (chatGeneration.get() != generation || !ownsTurn(turnId)) return@collect
@@ -897,6 +940,11 @@ class MainViewModel(
             .map { ConversationHistory.summaryOf(it) }
     }
 
+    private suspend fun refreshMemory() {
+        memoryEnabledInternal.value = memory.isEnabled()
+        memoriesInternal.value = memory.list()
+    }
+
     private fun showLatest(conversation: Conversation) {
         userLineInternal.value = conversation.messages.lastOrNull { it.author == Author.User }?.text.orEmpty()
         iconLineInternal.value = conversation.messages.lastOrNull { it.author == Author.Assistant }?.text.orEmpty()
@@ -952,6 +1000,7 @@ class MainViewModel(
                         liveSpeech = RecognizerSpeechInput(context.applicationContext),
                         microphone = AndroidMicrophonePermission(context.applicationContext),
                         playback = OutputMixPlaybackCapture(),
+                        memory = RoomMemoryRepository.create(context.applicationContext),
                     )
                     @Suppress("UNCHECKED_CAST")
                     return model as T

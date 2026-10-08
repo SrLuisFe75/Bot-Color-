@@ -14,9 +14,14 @@ internal object GeminiMessages {
     const val UNAVAILABLE = "Gemini could not answer."
 }
 
-internal fun geminiSystemInstruction(name: String, personality: String): String {
+internal fun geminiSystemInstruction(
+    name: String,
+    personality: String,
+    memories: List<String> = emptyList(),
+): String {
     val resolvedName = name.trim().ifEmpty { "ICON" }
     val trait = personality.trim()
+    val facts = memories.map { it.trim() }.filter { it.isNotEmpty() }
     return buildString {
         append("Your name is ")
         append(resolvedName)
@@ -27,7 +32,15 @@ internal fun geminiSystemInstruction(name: String, personality: String): String 
             append(' ')
         }
         append("Reply in natural spoken sentences. Do not use Markdown. Do not use symbol lists.")
-    }
+        if (facts.isNotEmpty()) {
+            append(" The user asked you to keep these facts: ")
+            facts.forEach { fact ->
+                append(fact)
+                if (!fact.endsWith('.')) append('.')
+                append(' ')
+            }
+        }
+    }.trimEnd()
 }
 
 internal fun geminiFailureMessage(httpCode: Int?, error: Throwable?): String {

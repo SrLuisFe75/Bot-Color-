@@ -9,6 +9,7 @@ data class AIRequest(
     val persona: AssistantPersona,
     val history: List<Message>,
     val userText: String,
+    val memories: List<String> = emptyList(),
 )
 
 sealed interface AIEvent {

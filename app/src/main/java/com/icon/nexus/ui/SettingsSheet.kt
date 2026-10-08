@@ -1,5 +1,6 @@
 package com.icon.nexus.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,6 +18,8 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -32,6 +35,7 @@ fun SettingsSheet(
     onTranscriptStartsVisible: (Boolean) -> Unit,
     onApiKey: (String) -> Unit,
     onGeminiModel: (String) -> Unit,
+    onOpenMemory: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(
@@ -51,6 +55,15 @@ fun SettingsSheet(
                 text = "Settings",
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.padding(bottom = 8.dp),
+            )
+            Text(
+                text = "Memory",
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onOpenMemory)
+                    .semantics { contentDescription = "Memory" }
+                    .padding(vertical = 8.dp),
             )
             SettingSwitch(
                 label = "Demo mode",

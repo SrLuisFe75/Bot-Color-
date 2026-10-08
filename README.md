@@ -50,6 +50,10 @@ While Speaking with demo mode off, playback energy from audio session 0 drives t
 
 Live chat is stored with Room. A conversation has an id and a start time; each message has a user or ICON role, text, and a timestamp. Launch opens the newest thread and sends it as Gemini context. New conversation starts an empty thread. The conversation control opens a short history list: the first line and the time, tap to continue, swipe or Delete to remove. Deleting the open thread starts a new one. Demo sessions are not saved. The transcript toggle stays on that list.
 
+## Phase 12
+
+User memory is a separate store from chat history. It is off until the user turns on “Remember what I ask you to keep.” on the Memory screen, opened from one settings row. Facts are typed there. Nothing is extracted from the conversation. While remembering is on, those lines are included in the Gemini system instruction. Chat messages stay in the conversation tables.
+
 Cinematic playback is a later phase.
 
 ## Build

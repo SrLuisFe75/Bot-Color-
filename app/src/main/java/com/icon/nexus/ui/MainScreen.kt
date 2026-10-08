@@ -50,7 +50,10 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun MainScreen(viewModel: MainViewModel) {
+fun MainScreen(
+    viewModel: MainViewModel,
+    onOpenMemory: () -> Unit = {},
+) {
     val state by viewModel.appState.collectAsStateWithLifecycle()
     val chromeVisible by viewModel.chromeVisible.collectAsStateWithLifecycle()
     val transcriptVisible by viewModel.transcriptVisible.collectAsStateWithLifecycle()
@@ -215,6 +218,10 @@ fun MainScreen(viewModel: MainViewModel) {
             },
             onGeminiModel = { value ->
                 scope.launch { viewModel.setGeminiModel(value) }
+            },
+            onOpenMemory = {
+                settingsOpen = false
+                onOpenMemory()
             },
             onDismiss = { settingsOpen = false },
         )

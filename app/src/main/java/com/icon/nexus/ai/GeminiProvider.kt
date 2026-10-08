@@ -112,6 +112,7 @@ class GeminiProvider(
                     geminiSystemInstruction(
                         name = request.persona.name,
                         personality = request.persona.personality,
+                        memories = request.memories,
                     ),
                 ),
             ),

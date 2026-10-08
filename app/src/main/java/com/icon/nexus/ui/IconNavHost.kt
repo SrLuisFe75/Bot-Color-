@@ -11,7 +11,16 @@ fun IconNavHost(viewModel: MainViewModel) {
     val navController = rememberNavController()
     NavHost(navController = navController, startDestination = "main") {
         composable("main") {
-            MainScreen(viewModel)
+            MainScreen(
+                viewModel = viewModel,
+                onOpenMemory = { navController.navigate("memory") },
+            )
+        }
+        composable("memory") {
+            MemoryScreen(
+                viewModel = viewModel,
+                onBack = { navController.popBackStack() },
+            )
         }
     }
 }
