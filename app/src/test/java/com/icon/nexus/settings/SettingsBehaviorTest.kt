@@ -156,18 +156,18 @@ class SettingsBehaviorTest {
             speech = speech,
             synthesizer = voice,
         )
-        assertEquals("es-MX", speech.languageTag)
+        assertEquals("es-MX", speech.askedTag)
         assertEquals("es-MX", voice.languageTag)
-        assertEquals("es-MX", resolvedLanguageTag(speech.languageTag, "en-US"))
+        assertEquals("es-MX", resolvedLanguageTag(speech.askedTag, "en-US"))
         assertEquals("es-MX", ttsLanguage(voice.languageTag, "en-US").toLanguageTag())
         assertEquals(1.2f, voice.rate, 0.0001f)
         assertEquals(0.4f, voice.volume, 0.0001f)
 
         viewModel.setLanguageTag("ja-JP")
         assertEquals("ja-JP", stored.get().languageTag)
-        assertEquals("ja-JP", speech.languageTag)
+        assertEquals("ja-JP", speech.askedTag)
         assertEquals("ja-JP", voice.languageTag)
-        assertEquals("ja-JP", resolvedLanguageTag(speech.languageTag, "en-US"))
+        assertEquals("ja-JP", resolvedLanguageTag(speech.askedTag, "en-US"))
         assertEquals("ja-JP", ttsLanguage(voice.languageTag, "en-US").toLanguageTag())
         assertEquals("en-US", resolvedLanguageTag("  ", "en-US"))
     }
@@ -232,7 +232,7 @@ private class CountingGemini : AIProvider {
 }
 
 private class RecordingSpeechInput : SpeechInput {
-    var languageTag: String = ""
+    var askedTag: String = ""
 
     override val isActive: Boolean = false
 
@@ -241,7 +241,7 @@ private class RecordingSpeechInput : SpeechInput {
     override fun stopListening() = Unit
 
     override fun setLanguageTag(tag: String) {
-        languageTag = tag
+        askedTag = tag
     }
 }
 
