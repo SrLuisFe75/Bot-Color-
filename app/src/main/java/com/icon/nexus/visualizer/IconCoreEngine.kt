@@ -1,5 +1,7 @@
 package com.icon.nexus.visualizer
 
+import android.app.ActivityManager
+import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
@@ -16,6 +18,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.platform.LocalContext
 import com.icon.nexus.camera.CameraTour
 import com.icon.nexus.camera.CinematicCamera
 import com.icon.nexus.camera.ShotPlanner
@@ -41,11 +44,13 @@ import kotlin.math.sin
  * when that level is near zero. Alert swaps in an amber core and a separate
  * outer amber ring.
  */
-class IconCoreEngine : VisualizerEngine {
+class IconCoreEngine(
+    memoryClassMb: Int = IconCoreTheme.LOW_HEAP_CLASS_MB,
+) : VisualizerEngine {
     private val state = MutableStateFlow(VisualState(themeId = IconCoreTheme.id))
     override val visualState: StateFlow<VisualState> = state.asStateFlow()
 
-    private val motes = CoreMotes()
+    private val motes = CoreMotes(IconCoreTheme.moteCap(memoryClassMb))
     private val fieldPaint = fillPaint()
     private val glowPaint = fillPaint()
     private val nucleusPaint = fillPaint()
@@ -89,7 +94,7 @@ class IconCoreEngine : VisualizerEngine {
         height: Float,
         appState: AppState,
         nowNanos: Long,
-        camera: CinematicCamera = CinematicCamera(),
+        camera: CinematicCamera = IDENTITY_CAMERA,
     ) {
         if (width < 1f || height < 1f) return
         val dt = advance(nowNanos)
@@ -286,7 +291,11 @@ fun IconCoreScene(
     returning: Boolean = false,
     sensitivity: Float = 1f,
 ) {
-    val engine = remember { IconCoreEngine() }
+    val context = LocalContext.current
+    val engine = remember(context) {
+        val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        IconCoreEngine(manager?.memoryClass ?: IconCoreTheme.LOW_HEAP_CLASS_MB)
+    }
     val planner = remember { ShotPlanner() }
     val clock = remember { CameraClock() }
     val theme = VisualizerThemes.forId(themeId)
@@ -331,7 +340,7 @@ private class CameraClock {
             activeTour = null
             easing = false
             tourStartNanos = 0L
-            return CinematicCamera()
+            return IDENTITY_CAMERA
         }
         if (tour != null && tour !== activeTour) {
             activeTour = tour
@@ -347,7 +356,7 @@ private class CameraClock {
             cancelFrom = if (tour != null) {
                 planner.position(tour, elapsed)
             } else {
-                CinematicCamera()
+                IDENTITY_CAMERA
             }
             cancelStartNanos = 0L
         }
@@ -356,7 +365,7 @@ private class CameraClock {
             if (cancelStartNanos == 0L && frameNanos > 0L) cancelStartNanos = frameNanos
             return planner.cancel(cancelFrom, elapsedMillis(cancelStartNanos, frameNanos))
         }
-        val current = tour ?: return CinematicCamera()
+        val current = tour ?: return IDENTITY_CAMERA
         return planner.position(current, elapsed)
     }
 
@@ -369,8 +378,10 @@ private class CameraClock {
 /**
  * Sparse mote field. [CAP] is the hard limit; the array is filled once.
  */
-internal class CoreMotes {
-    val motes: Array<Mote> = Array(CAP) { index ->
+internal class CoreMotes(
+    cap: Int = IconCoreTheme.FULL_MOTE_CAP,
+) {
+    val motes: Array<Mote> = Array(cap) { index ->
         val unit = unit(index)
         val next = unit(index + 17)
         val third = unit(index + 41)
@@ -385,9 +396,11 @@ internal class CoreMotes {
     }
 
     companion object {
-        const val CAP = 48
+        const val CAP = IconCoreTheme.FULL_MOTE_CAP
     }
 }
+
+private val IDENTITY_CAMERA = CinematicCamera()
 
 internal class Mote(
     var angle: Float,

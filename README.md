@@ -74,10 +74,16 @@ Privacy on the settings screen states what stays on the device, what a Gemini re
 
 Verification only. The checks below name the JVM tests that already covered each item, and the new tests fill the gaps. The app is not restyled.
 
+## Phase 18
+
+Performance. A heap class below 128 MB allocates 24 motes once; 128 MB and above allocate 48. Paints, the oval path, and shaders are not created on each frame. Room queries and Gemini requests stay off the main thread. Leaving the screen still releases the visualizer, speech, the recognizer, and the in-flight turn.
+
 ## Verification
 
 No emulator is installed in this environment, so the debug APK was not installed and a demo mic cycle was not run on a device.
 
+- Device install: needs a device.
+- Hands-on mic cycle: needs a device.
 - Compiles: automated. `./gradlew :app:assembleDebug`
 - Interrupt clears speech, and a second turn does not speak the first answer: automated. `StateIntegrationTest.interruptThenSecondReplySpeaksOnlyTheNewTurn`, `TtsPlaybackTest.interruptClearsTheQueueAndIgnoresALateCompletion`
 - Two turns in one conversation keep order: automated. `ConversationHistoryViewModelTest.twoTurnsInOneConversationKeepOrder`

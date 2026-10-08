@@ -13,6 +13,18 @@ interface VisualizerTheme {
 object IconCoreTheme : VisualizerTheme {
     override val id: VisualThemeId = VisualThemeId.Core
     override val label: String = "ICON CORE"
+
+    const val LOW_HEAP_CLASS_MB = 128
+    const val LOW_MOTE_CAP = 24
+    const val FULL_MOTE_CAP = 48
+
+    /**
+     * Mote count for a device heap class in megabytes. Below 128 MB the
+     * field is smaller. The array is allocated once from this result.
+     */
+    fun moteCap(memoryClassMb: Int): Int {
+        return if (memoryClassMb < LOW_HEAP_CLASS_MB) LOW_MOTE_CAP else FULL_MOTE_CAP
+    }
 }
 
 object VisualizerThemes {

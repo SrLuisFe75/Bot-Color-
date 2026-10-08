@@ -23,6 +23,19 @@ class IconCoreThemeTest {
     }
 
     @Test
+    fun moteCapFollowsTheHeapClass() {
+        assertEquals(IconCoreTheme.LOW_MOTE_CAP, IconCoreTheme.moteCap(0))
+        assertEquals(24, IconCoreTheme.moteCap(16))
+        assertEquals(24, IconCoreTheme.moteCap(64))
+        assertEquals(24, IconCoreTheme.moteCap(127))
+        assertEquals(IconCoreTheme.FULL_MOTE_CAP, IconCoreTheme.moteCap(128))
+        assertEquals(48, IconCoreTheme.moteCap(256))
+        assertEquals(48, IconCoreTheme.moteCap(512))
+        assertEquals(24, CoreMotes(IconCoreTheme.moteCap(127)).motes.size)
+        assertEquals(48, CoreMotes(IconCoreTheme.moteCap(128)).motes.size)
+    }
+
+    @Test
     fun moteFieldIsCappedAtFortyEight() {
         val field = CoreMotes()
         assertEquals(48, CoreMotes.CAP)
