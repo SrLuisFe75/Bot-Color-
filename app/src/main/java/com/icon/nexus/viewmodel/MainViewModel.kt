@@ -1,0 +1,1433 @@
+package com.icon.nexus.viewmodel
+
+import android.content.Context
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import com.icon.nexus.ai.AIEvent
+import com.icon.nexus.ai.AIManager
+import com.icon.nexus.ai.AIProvider
+import com.icon.nexus.ai.AIRequest
+import com.icon.nexus.ai.DemoProvider
+import com.icon.nexus.ai.GeminiMessages
+import com.icon.nexus.ai.GeminiProvider
+import com.icon.nexus.ai.logIconFailure
+import com.icon.nexus.audio.AndroidMicrophonePermission
+import com.icon.nexus.audio.AudioAnalyzer
+import com.icon.nexus.audio.MicrophonePermission
+import com.icon.nexus.audio.AndroidSpeechSynthesizer
+import com.icon.nexus.audio.OutputMixPlaybackCapture
+import com.icon.nexus.audio.PlaybackCapture
+import com.icon.nexus.audio.RecognizerSpeechInput
+import com.icon.nexus.audio.UnavailablePlaybackCapture
+import com.icon.nexus.audio.UtteranceEnergy
+import com.icon.nexus.audio.SpeechEvent
+import com.icon.nexus.audio.SpeechFailure
+import com.icon.nexus.audio.SpeechInput
+import com.icon.nexus.audio.SpeechInputGate
+import com.icon.nexus.audio.SpeechMessages
+import com.icon.nexus.audio.SpeechPlaybackListener
+import com.icon.nexus.audio.SpeechSynthesizer
+import com.icon.nexus.audio.speechErrorMessage
+import com.icon.nexus.audio.splitCompletedSentences
+import com.icon.nexus.camera.CameraTour
+import com.icon.nexus.camera.ShotPlanner
+import com.icon.nexus.data.AppSettings
+import com.icon.nexus.data.ConversationHistory
+import com.icon.nexus.data.ConversationRepository
+import com.icon.nexus.data.ConversationSummary
+import com.icon.nexus.data.EncryptedSettingsRepository
+import com.icon.nexus.data.InMemoryConversationRepository
+import com.icon.nexus.data.history.RoomConversationRepository
+import com.icon.nexus.memory.MemoryRepository
+import com.icon.nexus.memory.OffMemoryRepository
+import com.icon.nexus.memory.RoomMemoryRepository
+import com.icon.nexus.memory.UserMemory
+import com.icon.nexus.memory.rememberedFacts
+import com.icon.nexus.data.SettingsRepository
+import com.icon.nexus.domain.AppState
+import com.icon.nexus.domain.AppStateMachine
+import com.icon.nexus.domain.Author
+import com.icon.nexus.domain.resolvedPersona
+import com.icon.nexus.language.LanguageChoice
+import com.icon.nexus.language.ReplyLanguage
+import com.icon.nexus.language.languageChoice
+import com.icon.nexus.language.replyLanguageFor
+import com.icon.nexus.domain.Conversation
+import com.icon.nexus.domain.Message
+import com.icon.nexus.domain.StateTransition
+import com.icon.nexus.onboarding.canLeaveOnboarding
+import com.icon.nexus.settings.ModelProviderId
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.min
+
+/**
+ * Demo mode runs a timed local session on a mic tap. The job is tied to the
+ * current turn id: a newer turn cancels stale level and transcript writes.
+ * With demo mode off, [sendText] and a one-shot microphone utterance stream
+ * a Gemini reply into the transcript. Finished sentences are spoken with
+ * Android text-to-speech, then the app returns to Idle. While that speech
+ * plays, output-mix energy drives [audioLevel] through [analyzer]. Demo mode
+ * keeps the timed local timeline, the simulated syllable level, and does
+ * not speak those sentences.
+ *
+ * [appState] is the only phase SpeechInput, Gemini, text-to-speech, the
+ * transcript, and the presence follow. Exceptional failures enter Alert
+ * with their message, then return to Idle.
+ *
+ * [onAppBackgrounded] is the background hook. The activity calls it from
+ * `onStop` so leaving the foreground returns the app to Idle and cancels
+ * an in-flight Gemini call.
+ *
+ * Live chat is stored as conversation history. Launch opens the newest
+ * thread and sends it as Gemini context. Demo sessions are not saved.
+ *
+ * The cinematic control runs a camera over the live core. Speaking,
+ * listening, and the voice level keep moving the nucleus during that path.
+ * Cancel eases back to the wide framing, then the chrome returns.
+ */
+class MainViewModel(
+    private val machine: AppStateMachine,
+    private val speechInput: SpeechInput,
+    private val synthesizer: SpeechSynthesizer,
+    val aiManager: AIManager,
+    private val settings: SettingsRepository,
+    initialSettings: AppSettings = AppSettings.defaults(),
+    private val analyzer: AudioAnalyzer = AudioAnalyzer(),
+    private val gemini: AIProvider = GeminiProvider(settings),
+    private val conversations: ConversationRepository = InMemoryConversationRepository(),
+    private val liveSpeech: SpeechInput = speechInput,
+    private val microphone: MicrophonePermission = MicrophonePermission { true },
+    private val playback: PlaybackCapture = UnavailablePlaybackCapture,
+    private val memory: MemoryRepository = OffMemoryRepository,
+    private val clock: () -> Long = { System.currentTimeMillis() },
+    private val conversationIds: () -> String = { UUID.randomUUID().toString() },
+) : ViewModel() {
+    private val appStateInternal = MutableStateFlow(machine.current)
+    val appState: StateFlow<AppState> = appStateInternal.asStateFlow()
+
+    private val rejectionInternal = MutableStateFlow<String?>(null)
+    val rejection: StateFlow<String?> = rejectionInternal.asStateFlow()
+
+    private val transcriptVisibleInternal = MutableStateFlow(initialSettings.showTranscript)
+    val transcriptVisible: StateFlow<Boolean> = transcriptVisibleInternal.asStateFlow()
+
+    private val transcriptStartsVisibleInternal = MutableStateFlow(initialSettings.showTranscript)
+    val transcriptStartsVisible: StateFlow<Boolean> = transcriptStartsVisibleInternal.asStateFlow()
+
+    private val chromeVisibleInternal = MutableStateFlow(true)
+    val chromeVisible: StateFlow<Boolean> = chromeVisibleInternal.asStateFlow()
+
+    private val cinematicTourInternal = MutableStateFlow<CameraTour?>(null)
+    val cinematicTour: StateFlow<CameraTour?> = cinematicTourInternal.asStateFlow()
+
+    private val cinematicReturningInternal = MutableStateFlow(false)
+    val cinematicReturning: StateFlow<Boolean> = cinematicReturningInternal.asStateFlow()
+
+    private val shotPlanner = ShotPlanner()
+    private val cinematicSeed = AtomicLong(0)
+    private var cinematicJob: Job? = null
+
+    private val demoModeInternal = MutableStateFlow(initialSettings.demoMode)
+    val demoMode: StateFlow<Boolean> = demoModeInternal.asStateFlow()
+
+    private val userLineInternal = MutableStateFlow("")
+    val userLine: StateFlow<String> = userLineInternal.asStateFlow()
+
+    private val iconLineInternal = MutableStateFlow("")
+    val iconLine: StateFlow<String> = iconLineInternal.asStateFlow()
+
+    private val audioLevelInternal = MutableStateFlow(0f)
+    val audioLevel: StateFlow<Float> = audioLevelInternal.asStateFlow()
+
+    private val apiKeyInternal = MutableStateFlow(initialSettings.apiKey)
+    val apiKey: StateFlow<String> = apiKeyInternal.asStateFlow()
+
+    private val geminiModelInternal = MutableStateFlow(initialSettings.geminiModel)
+    val geminiModel: StateFlow<String> = geminiModelInternal.asStateFlow()
+
+    private val providerInternal = MutableStateFlow(initialSettings.provider)
+    val provider: StateFlow<ModelProviderId> = providerInternal.asStateFlow()
+
+    private val personaNameInternal = MutableStateFlow(initialSettings.personaName)
+    val personaName: StateFlow<String> = personaNameInternal.asStateFlow()
+
+    private val personalityInternal = MutableStateFlow(initialSettings.personality)
+    val personality: StateFlow<String> = personalityInternal.asStateFlow()
+
+    private val voiceRateInternal = MutableStateFlow(initialSettings.voiceRate)
+    val voiceRate: StateFlow<Float> = voiceRateInternal.asStateFlow()
+
+    private val voiceVolumeInternal = MutableStateFlow(initialSettings.voiceVolume)
+    val voiceVolume: StateFlow<Float> = voiceVolumeInternal.asStateFlow()
+
+    private val languageTagInternal = MutableStateFlow(initialSettings.languageTag)
+    val languageTag: StateFlow<String> = languageTagInternal.asStateFlow()
+    private var lastReplyLanguage = ReplyLanguage.English
+    private var voiceOverridden = false
+
+    private val voiceSessionInternal = MutableStateFlow(false)
+    val voiceSessionActive: StateFlow<Boolean> = voiceSessionInternal.asStateFlow()
+
+    private val visualSensitivityInternal = MutableStateFlow(initialSettings.visualSensitivity)
+    val visualSensitivity: StateFlow<Float> = visualSensitivityInternal.asStateFlow()
+
+    private val showOnboardingInternal = MutableStateFlow(!initialSettings.onboardingComplete)
+    val showOnboarding: StateFlow<Boolean> = showOnboardingInternal.asStateFlow()
+
+    private val voicePreviewNoticeInternal = MutableStateFlow<String?>(null)
+    val voicePreviewNotice: StateFlow<String?> = voicePreviewNoticeInternal.asStateFlow()
+
+    private val voicePreviewActiveInternal = MutableStateFlow(false)
+    val voicePreviewActive: StateFlow<Boolean> = voicePreviewActiveInternal.asStateFlow()
+
+    val speechAvailable: Boolean
+        get() = synthesizer.available
+
+    private val microphoneExplanationInternal = MutableStateFlow(false)
+    val microphoneExplanation: StateFlow<Boolean> = microphoneExplanationInternal.asStateFlow()
+
+    private val historyInternal = MutableStateFlow<List<ConversationSummary>>(emptyList())
+    val history: StateFlow<List<ConversationSummary>> = historyInternal.asStateFlow()
+
+    private val memoryEnabledInternal = MutableStateFlow(false)
+    val memoryEnabled: StateFlow<Boolean> = memoryEnabledInternal.asStateFlow()
+
+    private val memoriesInternal = MutableStateFlow<List<UserMemory>>(emptyList())
+    val memories: StateFlow<List<UserMemory>> = memoriesInternal.asStateFlow()
+
+    private var activeConversationId: String? = null
+
+    private var speechTurnId: Long? = null
+    private var pendingUtterances = 0
+    private var replyFinished = false
+    private val sentenceBuffer = StringBuilder()
+    private var alertJob: Job? = null
+    private var captureRequested = false
+    private var usingFallback = false
+    private val settingsMutex = Mutex()
+    private val conversationMutex = Mutex()
+
+    init {
+        applyVoice(initialSettings)
+        playback.setLevelListener { level -> acceptPlaybackEnergy(level) }
+        liveSpeech.setListener { event -> onSpeechEvent(event) }
+        synthesizer.setPlaybackListener(object : SpeechPlaybackListener {
+            override fun onUtteranceStarted(turnId: Long) {
+                if (turnId == VOICE_PREVIEW_TURN) return
+                onPlaybackFallback(turnId, UtteranceEnergy.onStart())
+            }
+
+            override fun onUtteranceRange(turnId: Long) {
+                if (turnId == VOICE_PREVIEW_TURN) return
+                onPlaybackFallback(turnId, UtteranceEnergy.onRangeStart())
+            }
+
+            override fun onUtteranceFinished(turnId: Long) {
+                if (turnId == VOICE_PREVIEW_TURN) {
+                    voicePreviewActiveInternal.value = false
+                    return
+                }
+                onPlaybackFallback(turnId, UtteranceEnergy.onDone())
+                onSpeechFinished(turnId)
+            }
+
+            override fun onSpeechUnavailable() {
+                if (voicePreviewActiveInternal.value) {
+                    voicePreviewActiveInternal.value = false
+                    voicePreviewNoticeInternal.value = SpeechMessages.UNAVAILABLE
+                    return
+                }
+                val turnId = speechTurnId ?: return
+                markSpeechUnavailable(turnId)
+            }
+        })
+        viewModelScope.launch { restoreHistory() }
+        viewModelScope.launch { refreshMemory() }
+    }
+
+    private val chatGeneration = AtomicInteger(0)
+
+    private var scriptIndex = 0
+    private var levelGeneration = 0
+    private var demoJob: Job? = null
+    private var chatJob: Job? = null
+
+    /**
+     * Opens a voice session and listens once. Later replies return to
+     * Listening on their own. Entering the Voice screen does not call this.
+     * Demo mode keeps the local timeline and does not loop the recognizer.
+     */
+    fun startVoiceSession() {
+        if (demoModeInternal.value) {
+            onMicClicked()
+            return
+        }
+        when (appStateInternal.value) {
+            AppState.Idle -> {
+                voiceSessionInternal.value = true
+                requestLiveListening()
+            }
+            is AppState.Thinking, is AppState.Speaking -> interruptToListening()
+            is AppState.Listening, is AppState.Alert -> Unit
+        }
+    }
+
+    /**
+     * Stops recognition and speech, returns to Ready, and leaves the mic
+     * closed. Listening does not resume after this.
+     */
+    fun endVoiceSession() {
+        voiceSessionInternal.value = false
+        stopDemoWork()
+        cancelChat()
+        cancelAlertTimer()
+        abandonSpeech()
+        microphoneExplanationInternal.value = false
+        liveSpeech.stopListening()
+        speechInput.stopListening()
+        if (appStateInternal.value !is AppState.Idle) {
+            dispatch(StateTransition.ToIdle)
+        }
+    }
+
+    fun onMicClicked() {
+        if (!demoModeInternal.value) {
+            when (appStateInternal.value) {
+                AppState.Idle -> requestLiveListening()
+                is AppState.Listening -> dispatch(StateTransition.ToIdle)
+                else -> Unit
+            }
+            return
+        }
+        when (val state = appStateInternal.value) {
+            AppState.Idle -> startDemoSession()
+            is AppState.Listening -> {
+                if (demoJob?.isActive == true) return
+                val generation = newGeneration()
+                demoJob = viewModelScope.launch {
+                    continueAfterListening(generation, state.turnId)
+                }
+            }
+            else -> Unit
+        }
+    }
+
+    /**
+     * Demo mode: Idle previews Alert, then returns to Idle. Speaking
+     * interrupts into Listening. Text chat: a long press while Thinking or
+     * Speaking cancels that turn and only then starts one-shot Listening.
+     */
+    fun onMicLongPress() {
+        if (!demoModeInternal.value) {
+            when (appStateInternal.value) {
+                is AppState.Thinking, is AppState.Speaking -> interruptToListening()
+                else -> Unit
+            }
+            return
+        }
+        when (appStateInternal.value) {
+            AppState.Idle -> startAlertPreview()
+            is AppState.Speaking -> interruptSpeaking()
+            else -> rejectionInternal.value = "Long press is the idle alert or the speaking interrupt"
+        }
+    }
+
+    fun onUserInterrupt(): Result<AppState> {
+        if (appStateInternal.value !is AppState.Speaking) {
+            return reject("Interrupt is only legal while Speaking")
+        }
+        return interruptSpeaking()
+    }
+
+    /**
+     * Returns to Idle from any other state. Idle stays Idle.
+     * Call this when the app goes to the background.
+     */
+    fun onAppBackgrounded(): Result<AppState> {
+        voiceSessionInternal.value = false
+        endCinematic()
+        stopDemoWork()
+        cancelChat()
+        cancelAlertTimer()
+        abandonSpeech()
+        microphoneExplanationInternal.value = false
+        liveSpeech.stopListening()
+        if (appStateInternal.value is AppState.Idle) {
+            speechInput.stopListening()
+            return Result.success(AppState.Idle)
+        }
+        return dispatch(StateTransition.ToIdle)
+    }
+
+    override fun onCleared() {
+        cinematicJob?.cancel()
+        abandonSpeech()
+        synthesizer.release()
+        liveSpeech.stopListening()
+        super.onCleared()
+    }
+
+    /**
+     * Raw output-mix energy for the current live Speaking turn. Ignored
+     * during demo mode and while the utterance envelope is the source.
+     */
+    internal fun acceptPlaybackEnergy(raw: Float) {
+        if (usingFallback || demoModeInternal.value || !captureRequested) return
+        if (appStateInternal.value !is AppState.Speaking) return
+        audioLevelInternal.value = analyzer.next(raw)
+    }
+
+    fun acceptMicrophoneExplanation() {
+        microphoneExplanationInternal.value = false
+    }
+
+    fun dismissMicrophoneExplanation() {
+        microphoneExplanationInternal.value = false
+    }
+
+    fun onMicrophonePermissionResult(granted: Boolean) {
+        microphoneExplanationInternal.value = false
+        if (demoModeInternal.value) return
+        if (!granted) {
+            enterAlert(SpeechMessages.PERMISSION)
+            return
+        }
+        if (appStateInternal.value is AppState.Idle) {
+            dispatch(StateTransition.ToListening)
+        }
+    }
+
+    fun sendText(raw: String) {
+        if (demoModeInternal.value) return
+        val text = raw.trim()
+        if (text.isEmpty()) return
+        val state = appStateInternal.value
+        if (state !is AppState.Idle && state !is AppState.Thinking && state !is AppState.Listening) return
+        val generation = beginChatTurn()
+        chatJob = viewModelScope.launch {
+            runChatTurn(generation, text)
+        }
+    }
+
+    fun newConversation() {
+        if (demoModeInternal.value) return
+        cancelChat()
+        abandonSpeech()
+        userLineInternal.value = ""
+        iconLineInternal.value = ""
+        if (appStateInternal.value !is AppState.Idle) {
+            dispatch(StateTransition.ToIdle)
+        }
+        val conversation = Conversation(
+            id = conversationIds(),
+            startedAt = clock(),
+        )
+        activeConversationId = conversation.id
+        viewModelScope.launch {
+            conversationMutex.withLock {
+                conversations.save(conversation)
+                publishHistory()
+            }
+        }
+    }
+
+    /**
+     * Loads [id] into the open thread. The next live request sends that
+     * thread as Gemini context.
+     */
+    fun continueConversation(id: String) {
+        if (demoModeInternal.value) return
+        cancelChat()
+        abandonSpeech()
+        if (appStateInternal.value !is AppState.Idle) {
+            dispatch(StateTransition.ToIdle)
+        }
+        viewModelScope.launch {
+            val conversation = conversationMutex.withLock {
+                conversations.get(id)
+            } ?: return@launch
+            activeConversationId = conversation.id
+            showLatest(conversation)
+        }
+    }
+
+    fun deleteConversation(id: String) {
+        if (demoModeInternal.value) return
+        val removingOpen = id == activeConversationId
+        if (removingOpen) {
+            cancelChat()
+            abandonSpeech()
+            userLineInternal.value = ""
+            iconLineInternal.value = ""
+            if (appStateInternal.value !is AppState.Idle) {
+                dispatch(StateTransition.ToIdle)
+            }
+        }
+        viewModelScope.launch {
+            conversationMutex.withLock {
+                conversations.delete(id)
+                if (removingOpen) {
+                    val created = Conversation(
+                        id = conversationIds(),
+                        startedAt = clock(),
+                    )
+                    conversations.save(created)
+                    activeConversationId = created.id
+                }
+                publishHistory()
+            }
+        }
+    }
+
+    fun refreshHistory() {
+        if (demoModeInternal.value) return
+        viewModelScope.launch {
+            conversationMutex.withLock { publishHistory() }
+        }
+    }
+
+    fun setMemoryEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            memory.setEnabled(enabled)
+            refreshMemory()
+        }
+    }
+
+    fun addMemory(raw: String) {
+        viewModelScope.launch {
+            memory.add(raw)
+            refreshMemory()
+        }
+    }
+
+    fun deleteMemory(id: String) {
+        viewModelScope.launch {
+            memory.delete(id)
+            refreshMemory()
+        }
+    }
+
+    fun clearMemories() {
+        viewModelScope.launch {
+            memory.clear()
+            refreshMemory()
+        }
+    }
+
+    /**
+     * Removes every conversation and stored memory, clears the API key, and
+     * leaves one new empty thread. Demo mode and the onboarding flag stay.
+     */
+    fun deleteLocalData() {
+        stopDemoWork()
+        cancelChat()
+        cancelAlertTimer()
+        abandonSpeech()
+        liveSpeech.stopListening()
+        if (liveSpeech !== speechInput) {
+            speechInput.stopListening()
+        }
+        userLineInternal.value = ""
+        iconLineInternal.value = ""
+        apiKeyInternal.value = ""
+        if (appStateInternal.value !is AppState.Idle) {
+            dispatch(StateTransition.ToIdle)
+        }
+        viewModelScope.launch {
+            settingsMutex.withLock {
+                settings.update { current -> current.copy(apiKey = "") }
+            }
+            memory.clear()
+            refreshMemory()
+            conversationMutex.withLock {
+                conversations.list().map { it.id }.forEach { id ->
+                    conversations.delete(id)
+                }
+                val created = Conversation(
+                    id = conversationIds(),
+                    startedAt = clock(),
+                )
+                conversations.save(created)
+                activeConversationId = created.id
+                publishHistory()
+            }
+        }
+    }
+
+    fun toggleTranscript() {
+        transcriptVisibleInternal.value = !transcriptVisibleInternal.value
+    }
+
+    fun toggleCinematic() {
+        if (cinematicTourInternal.value != null || cinematicReturningInternal.value) {
+            cancelCinematic()
+        } else {
+            startCinematic()
+        }
+    }
+
+    fun showChrome() {
+        if (cinematicTourInternal.value != null || cinematicReturningInternal.value) {
+            cancelCinematic()
+            return
+        }
+        chromeVisibleInternal.value = true
+    }
+
+    private fun startCinematic() {
+        cinematicJob?.cancel()
+        cinematicReturningInternal.value = false
+        cinematicTourInternal.value = shotPlanner.tour(cinematicSeed.incrementAndGet())
+        chromeVisibleInternal.value = false
+        cinematicJob = viewModelScope.launch {
+            delay(ShotPlanner.TOUR_MILLIS)
+            finishCinematic()
+        }
+    }
+
+    private fun cancelCinematic() {
+        if (cinematicReturningInternal.value) return
+        if (cinematicTourInternal.value == null) {
+            chromeVisibleInternal.value = true
+            return
+        }
+        cinematicJob?.cancel()
+        cinematicReturningInternal.value = true
+        cinematicJob = viewModelScope.launch {
+            delay(ShotPlanner.CANCEL_MILLIS)
+            finishCinematic()
+        }
+    }
+
+    private fun finishCinematic() {
+        cinematicJob = null
+        cinematicTourInternal.value = null
+        cinematicReturningInternal.value = false
+        chromeVisibleInternal.value = true
+    }
+
+    private fun endCinematic() {
+        cinematicJob?.cancel()
+        finishCinematic()
+    }
+
+    suspend fun setDemoMode(enabled: Boolean) {
+        settingsMutex.withLock {
+            settings.update { current -> current.copy(demoMode = enabled) }
+        }
+        demoModeInternal.value = enabled
+    }
+
+    suspend fun setTranscriptStartsVisible(visible: Boolean) {
+        settingsMutex.withLock {
+            settings.update { current -> current.copy(showTranscript = visible) }
+        }
+        transcriptStartsVisibleInternal.value = visible
+        transcriptVisibleInternal.value = visible
+    }
+
+    suspend fun setApiKey(value: String) {
+        apiKeyInternal.value = value
+        settingsMutex.withLock {
+            settings.update { current -> current.copy(apiKey = value) }
+        }
+    }
+
+    suspend fun setGeminiModel(value: String) {
+        geminiModelInternal.value = value
+        settingsMutex.withLock {
+            settings.update { current -> current.copy(geminiModel = value) }
+        }
+    }
+
+    suspend fun setProvider(provider: ModelProviderId) {
+        val demo = provider == ModelProviderId.DEMO
+        if (demo && !demoModeInternal.value) {
+            cancelChat()
+            abandonSpeech()
+            liveSpeech.stopListening()
+            if (appStateInternal.value !is AppState.Idle) {
+                dispatch(StateTransition.ToIdle)
+            }
+        }
+        providerInternal.value = provider
+        demoModeInternal.value = demo
+        settingsMutex.withLock {
+            settings.update { current -> current.copy(provider = provider, demoMode = demo) }
+        }
+    }
+
+    suspend fun setPersonaName(value: String) {
+        personaNameInternal.value = value
+        settingsMutex.withLock {
+            settings.update { current -> current.copy(personaName = value) }
+        }
+    }
+
+    suspend fun setPersonality(value: String) {
+        personalityInternal.value = value
+        settingsMutex.withLock {
+            settings.update { current -> current.copy(personality = value) }
+        }
+    }
+
+    suspend fun setVoiceRate(value: Float) {
+        val rate = value.coerceIn(MIN_VOICE_RATE, MAX_VOICE_RATE)
+        voiceRateInternal.value = rate
+        val next = settingsMutex.withLock {
+            settings.update { current -> current.copy(voiceRate = rate) }
+            settings.get()
+        }
+        applyVoice(next)
+    }
+
+    suspend fun setVoiceVolume(value: Float) {
+        val volume = value.coerceIn(0f, 1f)
+        voiceVolumeInternal.value = volume
+        val next = settingsMutex.withLock {
+            settings.update { current -> current.copy(voiceVolume = volume) }
+            settings.get()
+        }
+        applyVoice(next)
+    }
+
+    suspend fun setLanguageTag(value: String) {
+        languageTagInternal.value = value
+        val next = settingsMutex.withLock {
+            settings.update { current -> current.copy(languageTag = value) }
+            settings.get()
+        }
+        applyVoice(next)
+    }
+
+    suspend fun setVisualSensitivity(value: Float) {
+        val sensitivity = value.coerceIn(0f, MAX_VISUAL_SENSITIVITY)
+        visualSensitivityInternal.value = sensitivity
+        settingsMutex.withLock {
+            settings.update { current -> current.copy(visualSensitivity = sensitivity) }
+        }
+    }
+
+    private fun applyVoice(current: AppSettings) {
+        synthesizer.applyVoice(current.voiceRate, current.voiceVolume, current.languageTag)
+        speechInput.setLanguageTag(current.languageTag)
+        liveSpeech.setLanguageTag(current.languageTag)
+    }
+
+    /**
+     * Ends the introduction. A denied microphone still finishes. The flag
+     * stays in the same settings store, so the next cold start opens main.
+     */
+    suspend fun finishOnboarding(microphoneGranted: Boolean) {
+        if (!canLeaveOnboarding(microphoneGranted)) return
+        stopVoicePreview()
+        settingsMutex.withLock {
+            settings.update { current -> current.copy(onboardingComplete = true) }
+        }
+        showOnboardingInternal.value = false
+    }
+
+    fun previewVoice() {
+        if (!synthesizer.available) {
+            voicePreviewActiveInternal.value = false
+            voicePreviewNoticeInternal.value = SpeechMessages.UNAVAILABLE
+            return
+        }
+        voicePreviewNoticeInternal.value = null
+        voicePreviewActiveInternal.value = true
+        synthesizer.stop()
+        synthesizer.enqueue(VOICE_PREVIEW_TURN, listOf(VOICE_PREVIEW_SENTENCE))
+    }
+
+    fun stopVoicePreview() {
+        voicePreviewActiveInternal.value = false
+        synthesizer.stop()
+    }
+
+    /**
+     * Applies one raw sample for [turnId]. A turn that is no longer Speaking
+     * is ignored, so a stale job cannot move the envelope.
+     */
+    fun pushAmplitude(turnId: Long, raw: Float) {
+        val speaking = appStateInternal.value as? AppState.Speaking ?: return
+        if (speaking.turnId != turnId) return
+        audioLevelInternal.value = analyzer.next(raw)
+    }
+
+    fun dispatch(target: StateTransition): Result<AppState> {
+        val current = appStateInternal.value
+        if (current is AppState.Speaking && AppStateMachine.isLegal(current, target)) {
+            synthesizer.stop()
+            releasePlayback(resetLevel = !demoModeInternal.value)
+        }
+        val result = machine.transition(target)
+        result.onSuccess { next ->
+            if (current is AppState.Alert && next !is AppState.Alert) {
+                cancelAlertTimer()
+            }
+            when (next) {
+                is AppState.Thinking -> if (demoModeInternal.value) {
+                    userLineInternal.value = demoTranscript[scriptIndex].first
+                }
+                is AppState.Speaking -> if (demoModeInternal.value) {
+                    iconLineInternal.value = demoTranscript[scriptIndex].second
+                    scriptIndex = (scriptIndex + 1) % demoTranscript.size
+                }
+                else -> Unit
+            }
+            appStateInternal.value = next
+            rejectionInternal.value = null
+            routeSpeech(next)
+            engagePlayback(next)
+        }
+        result.onFailure { error ->
+            rejectionInternal.value = error.message
+        }
+        return result
+    }
+
+    private fun startDemoSession() {
+        val generation = newGeneration()
+        demoJob?.cancel()
+        analyzer.reset()
+        audioLevelInternal.value = 0f
+        demoJob = viewModelScope.launch {
+            val listening = dispatch(StateTransition.ToListening).getOrNull() as? AppState.Listening
+                ?: return@launch
+            continueAfterListening(generation, listening.turnId)
+        }
+    }
+
+    private suspend fun continueAfterListening(generation: Int, listenTurnId: Long) {
+        delay(DEMO_LISTEN_MILLIS)
+        if (!still(generation, listenTurnId)) return
+        val thinking = dispatch(StateTransition.ToThinking).getOrNull() as? AppState.Thinking ?: return
+        delay(DEMO_THINK_MILLIS)
+        if (!still(generation, thinking.turnId)) return
+        val speaking = dispatch(StateTransition.ToSpeaking).getOrNull() as? AppState.Speaking ?: return
+        if (levelGeneration != generation) return
+        speak(speaking.turnId, generation, speakingMillis(iconLineInternal.value))
+        if (!still(generation, speaking.turnId)) return
+        dispatch(StateTransition.ToIdle)
+        releaseEnvelope(generation)
+    }
+
+    private suspend fun speak(turnId: Long, generation: Int, durationMillis: Long) {
+        var elapsed = 0L
+        while (elapsed < durationMillis) {
+            if (!still(generation, turnId)) return
+            pushAmplitude(turnId, syllableAmplitude(elapsed))
+            val step = min(DEMO_LEVEL_FRAME_MILLIS, durationMillis - elapsed)
+            delay(step)
+            elapsed += step
+        }
+    }
+
+    private suspend fun releaseEnvelope(generation: Int) {
+        var guard = 0
+        while (guard < 80 && levelGeneration == generation) {
+            val next = analyzer.next(0f)
+            if (levelGeneration != generation) return
+            audioLevelInternal.value = next
+            if (next < 0.02f) break
+            delay(DEMO_LEVEL_FRAME_MILLIS)
+            guard += 1
+        }
+        if (levelGeneration == generation) {
+            analyzer.reset()
+            audioLevelInternal.value = 0f
+        }
+    }
+
+    private fun startAlertPreview() {
+        demoJob?.cancel()
+        demoJob = viewModelScope.launch {
+            if (dispatch(StateTransition.ToAlert("Preview")).isFailure) return@launch
+            delay(DEMO_ALERT_MILLIS)
+            if (appStateInternal.value is AppState.Alert) {
+                dispatch(StateTransition.ToIdle)
+            }
+        }
+    }
+
+    private fun interruptSpeaking(): Result<AppState> {
+        stopDemoWork()
+        return dispatch(StateTransition.ToListening)
+    }
+
+    private fun stopDemoWork() {
+        newGeneration()
+        demoJob?.cancel()
+        demoJob = null
+        analyzer.reset()
+        audioLevelInternal.value = 0f
+    }
+
+    private fun requestLiveListening() {
+        if (microphone.isGranted()) {
+            dispatch(StateTransition.ToListening)
+            return
+        }
+        microphoneExplanationInternal.value = true
+    }
+
+    private fun interruptToListening() {
+        abandonSpeech()
+        cancelChat()
+        val state = appStateInternal.value
+        if (state !is AppState.Thinking && state !is AppState.Speaking) return
+        if (!microphone.isGranted()) {
+            dispatch(StateTransition.ToIdle)
+            microphoneExplanationInternal.value = true
+            return
+        }
+        dispatch(StateTransition.ToListening)
+    }
+
+    /**
+     * Alert is not sticky. A tap on the presence leaves it immediately.
+     * The failure timer does the same after [FAILURE_ALERT_MILLIS].
+     */
+    fun onPresenceTapped() {
+        if (appStateInternal.value !is AppState.Alert) return
+        cancelAlertTimer()
+        dispatch(StateTransition.ToIdle)
+    }
+
+    private fun onSpeechEvent(event: SpeechEvent) {
+        if (demoModeInternal.value) return
+        val listening = appStateInternal.value as? AppState.Listening ?: return
+        if (listening.turnId != event.turnId) return
+        when (event) {
+            is SpeechEvent.Result -> {
+                val text = event.text.trim()
+                if (text.isEmpty()) {
+                    if (voiceSessionInternal.value) {
+                        reopenSessionListening()
+                    } else {
+                        enterAlert(SpeechMessages.EMPTY)
+                    }
+                } else {
+                    val generation = beginChatTurn()
+                    chatJob = viewModelScope.launch {
+                        runChatTurn(generation, text)
+                    }
+                }
+            }
+            is SpeechEvent.Failure -> {
+                if (voiceSessionInternal.value && event.reason == SpeechFailure.NoMatch) {
+                    reopenSessionListening()
+                } else {
+                    enterAlert(speechErrorMessage(event.reason))
+                }
+            }
+        }
+    }
+
+    private fun routeSpeech(next: AppState) {
+        if (demoModeInternal.value) {
+            liveSpeech.stopListening()
+            if (next is AppState.Listening) {
+                speechInput.startListening(next.turnId)
+            } else {
+                speechInput.stopListening()
+            }
+            return
+        }
+        speechInput.stopListening()
+        if (next is AppState.Listening) {
+            liveSpeech.startListening(next.turnId)
+        } else {
+            liveSpeech.stopListening()
+        }
+    }
+
+    private fun beginReplySpeech(turnId: Long) {
+        speechTurnId = turnId
+        pendingUtterances = 0
+        replyFinished = false
+        sentenceBuffer.clear()
+    }
+
+    private fun absorbSpeech(turnId: Long, chunk: String) {
+        if (demoModeInternal.value || turnId != speechTurnId) return
+        sentenceBuffer.append(chunk)
+        val split = splitCompletedSentences(sentenceBuffer.toString())
+        sentenceBuffer.clear()
+        sentenceBuffer.append(split.remainder)
+        queueSentences(turnId, split.sentences)
+    }
+
+    private fun flushSpeech(turnId: Long) {
+        if (demoModeInternal.value || turnId != speechTurnId) return
+        val tail = sentenceBuffer.toString().trim()
+        sentenceBuffer.clear()
+        if (tail.any { it.isLetterOrDigit() }) {
+            queueSentences(turnId, listOf(tail))
+        }
+    }
+
+    private fun queueSentences(turnId: Long, sentences: List<String>) {
+        if (sentences.isEmpty() || turnId != speechTurnId) return
+        if (!synthesizer.available) {
+            markSpeechUnavailable(turnId)
+            return
+        }
+        pendingUtterances += sentences.size
+        if (appStateInternal.value is AppState.Thinking && ownsTurn(turnId)) {
+            dispatch(StateTransition.ToSpeaking)
+        }
+        synthesizer.enqueue(turnId, sentences)
+    }
+
+    private fun markSpeechUnavailable(turnId: Long) {
+        if (turnId != speechTurnId) return
+        enterAlert(SpeechMessages.UNAVAILABLE)
+    }
+
+    private fun onSpeechFinished(turnId: Long) {
+        if (demoModeInternal.value || turnId != speechTurnId) return
+        val activeTurn = when (val state = appStateInternal.value) {
+            is AppState.Thinking -> state.turnId
+            is AppState.Speaking -> state.turnId
+            else -> return
+        }
+        if (activeTurn != turnId) return
+        if (pendingUtterances > 0) pendingUtterances -= 1
+        maybeFinishSpeech(turnId)
+    }
+
+    private fun maybeFinishSpeech(turnId: Long) {
+        if (turnId != speechTurnId || !replyFinished || pendingUtterances > 0) return
+        if (appStateInternal.value is AppState.Speaking && ownsTurn(turnId)) {
+            restoreAutoVoice()
+            if (voiceSessionInternal.value && !demoModeInternal.value) {
+                dispatch(StateTransition.ToListening)
+            } else {
+                dispatch(StateTransition.ToIdle)
+            }
+        }
+    }
+
+    private fun reopenSessionListening() {
+        if (!voiceSessionInternal.value || demoModeInternal.value) return
+        if (appStateInternal.value is AppState.Listening) {
+            dispatch(StateTransition.ToIdle)
+        }
+        if (appStateInternal.value is AppState.Idle) {
+            requestLiveListening()
+        }
+    }
+
+    private fun abandonSpeech() {
+        voicePreviewActiveInternal.value = false
+        speechTurnId = null
+        pendingUtterances = 0
+        replyFinished = false
+        sentenceBuffer.clear()
+        releasePlayback(resetLevel = !demoModeInternal.value)
+        restoreAutoVoice()
+        synthesizer.stop()
+    }
+
+    private fun restoreAutoVoice() {
+        if (!voiceOverridden) return
+        voiceOverridden = false
+        synthesizer.applyVoice(
+            voiceRateInternal.value,
+            voiceVolumeInternal.value,
+            languageTagInternal.value,
+        )
+    }
+
+    /**
+     * Live Speaking captures the output mix. Demo Speaking keeps the
+     * simulated syllable level and never asks for a capture. A failed
+     * capture stays in Speaking and follows the utterance envelope.
+     */
+    private fun engagePlayback(next: AppState) {
+        if (demoModeInternal.value || next !is AppState.Speaking) return
+        if (captureRequested) return
+        captureRequested = true
+        analyzer.reset()
+        audioLevelInternal.value = 0f
+        usingFallback = try {
+            !playback.start()
+        } catch (_: Throwable) {
+            true
+        }
+    }
+
+    private fun releasePlayback(resetLevel: Boolean) {
+        if (!captureRequested) return
+        captureRequested = false
+        usingFallback = false
+        playback.release()
+        if (resetLevel) {
+            analyzer.reset()
+            audioLevelInternal.value = 0f
+        }
+    }
+
+    private fun onPlaybackFallback(turnId: Long, sample: Float) {
+        if (!usingFallback || demoModeInternal.value) return
+        val speaking = appStateInternal.value as? AppState.Speaking ?: return
+        if (speaking.turnId != turnId) return
+        audioLevelInternal.value = analyzer.next(sample)
+    }
+
+    /**
+     * Leaves Listening, Thinking, or Speaking for Alert. The message lives
+     * on [AppState.Alert] so the presence and the transcript read one state.
+     * A tap or [FAILURE_ALERT_MILLIS] returns to Idle.
+     */
+    private fun enterAlert(message: String) {
+        if (appStateInternal.value is AppState.Alert) return
+        voiceSessionInternal.value = false
+        abandonSpeech()
+        if (dispatch(StateTransition.ToAlert(message)).isFailure) return
+        cancelAlertTimer()
+        alertJob = viewModelScope.launch {
+            delay(FAILURE_ALERT_MILLIS)
+            if (appStateInternal.value is AppState.Alert) {
+                dispatch(StateTransition.ToIdle)
+            }
+        }
+    }
+
+    private fun cancelAlertTimer() {
+        alertJob?.cancel()
+        alertJob = null
+    }
+
+    private fun beginChatTurn(): Int {
+        val generation = chatGeneration.incrementAndGet()
+        chatJob?.cancel()
+        chatJob = null
+        if (appStateInternal.value is AppState.Thinking) {
+            dispatch(StateTransition.ToIdle)
+        }
+        return generation
+    }
+
+    private fun cancelChat() {
+        chatGeneration.incrementAndGet()
+        chatJob?.cancel()
+        chatJob = null
+    }
+
+    private suspend fun runChatTurn(generation: Int, text: String) {
+        if (chatGeneration.get() != generation) return
+        val thinking = dispatch(StateTransition.ToThinking).getOrNull() as? AppState.Thinking ?: return
+        if (chatGeneration.get() != generation) return
+        val turnId = thinking.turnId
+        beginReplySpeech(turnId)
+        userLineInternal.value = text
+        iconLineInternal.value = ""
+        try {
+            val current = settings.get()
+            if (chatGeneration.get() != generation || !ownsTurn(turnId)) return
+            if (current.apiKey.isBlank()) {
+                logIconFailure(GeminiMessages.BLANK_KEY)
+                enterAlert(GeminiMessages.BLANK_KEY)
+                return
+            }
+            val history = conversationMutex.withLock {
+                if (chatGeneration.get() != generation || demoModeInternal.value) {
+                    null
+                } else {
+                    val id = ensureConversation()
+                    val existing = conversations.get(id) ?: Conversation(id = id, startedAt = clock())
+                    val prior = existing.messages
+                    conversations.save(
+                        existing.copy(
+                            startedAt = existing.startedAt.takeIf { it > 0L } ?: clock(),
+                            messages = prior + Message(
+                                id = "user-$turnId",
+                                author = Author.User,
+                                text = text,
+                                turnId = turnId,
+                                timestamp = clock(),
+                            ),
+                        ),
+                    )
+                    publishHistory()
+                    prior
+                }
+            } ?: return
+            if (chatGeneration.get() != generation || !ownsTurn(turnId)) return
+            val persona = resolvedPersona(current.personaName, current.personality)
+            val facts = rememberedFacts(memory.isEnabled(), memory.list())
+            val reply = replyLanguageFor(current.languageTag, text, lastReplyLanguage)
+            val followLatest = languageChoice(current.languageTag) == LanguageChoice.Auto
+            if (reply != null) lastReplyLanguage = reply
+            if (followLatest && reply != null) {
+                voiceOverridden = true
+                synthesizer.applyVoice(current.voiceRate, current.voiceVolume, reply.tag)
+            }
+            gemini.streamReply(
+                AIRequest(
+                    turnId = turnId,
+                    persona = persona,
+                    history = history,
+                    userText = text,
+                    memories = facts,
+                    replyLanguage = reply,
+                    followLatestLanguage = followLatest && reply != null,
+                ),
+            ).collect { event ->
+                if (chatGeneration.get() != generation || !ownsTurn(turnId)) return@collect
+                when (event) {
+                    is AIEvent.Token -> {
+                        iconLineInternal.value += event.text
+                        absorbSpeech(turnId, event.text)
+                        writeIcon(generation, turnId, iconLineInternal.value)
+                    }
+                    is AIEvent.Failed -> {
+                        val message = event.message.ifBlank { GeminiMessages.EMPTY }
+                        logIconFailure(message)
+                        enterAlert(message)
+                    }
+                    is AIEvent.Completed -> {
+                        val reply = iconLineInternal.value.trim()
+                        if (reply.isEmpty()) {
+                            logIconFailure(GeminiMessages.EMPTY)
+                            enterAlert(GeminiMessages.EMPTY)
+                            return@collect
+                        }
+                        writeIcon(generation, turnId, reply)
+                        flushSpeech(turnId)
+                        if (appStateInternal.value is AppState.Alert) return@collect
+                        replyFinished = true
+                        maybeFinishSpeech(turnId)
+                    }
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            if (chatGeneration.get() == generation && ownsTurn(turnId)) {
+                logIconFailure(GeminiMessages.OFFLINE, error)
+                enterAlert(GeminiMessages.OFFLINE)
+            }
+        } finally {
+            if (
+                chatGeneration.get() == generation &&
+                ownsTurn(turnId) &&
+                appStateInternal.value is AppState.Thinking
+            ) {
+                dispatch(StateTransition.ToIdle)
+            }
+        }
+    }
+
+    private suspend fun restoreHistory() {
+        if (demoModeInternal.value) return
+        conversationMutex.withLock {
+            if (activeConversationId != null) return@withLock
+            val recent = conversations.list().maxByOrNull { it.startedAt } ?: return@withLock
+            activeConversationId = recent.id
+            showLatest(recent)
+            publishHistory()
+        }
+    }
+
+    private suspend fun ensureConversation(): String {
+        val current = activeConversationId
+        if (current != null && conversations.get(current) != null) return current
+        if (current != null) {
+            val created = Conversation(id = current, startedAt = clock())
+            conversations.save(created)
+            return current
+        }
+        val recent = conversations.list().maxByOrNull { it.startedAt }
+        if (recent != null) {
+            activeConversationId = recent.id
+            return recent.id
+        }
+        val created = Conversation(id = conversationIds(), startedAt = clock())
+        conversations.save(created)
+        activeConversationId = created.id
+        return created.id
+    }
+
+    private suspend fun writeIcon(generation: Int, turnId: Long, reply: String) {
+        if (demoModeInternal.value || reply.isEmpty()) return
+        conversationMutex.withLock {
+            if (chatGeneration.get() != generation) return@withLock
+            val id = activeConversationId ?: return@withLock
+            val existing = conversations.get(id) ?: return@withLock
+            val messageId = "icon-$turnId"
+            val previous = existing.messages.find { it.id == messageId }
+            val kept = existing.messages.filterNot { it.id == messageId }
+            conversations.save(
+                existing.copy(
+                    messages = kept + Message(
+                        id = messageId,
+                        author = Author.Assistant,
+                        text = reply,
+                        turnId = turnId,
+                        timestamp = previous?.timestamp ?: clock(),
+                    ),
+                ),
+            )
+        }
+    }
+
+    private suspend fun publishHistory() {
+        historyInternal.value = conversations.list()
+            .sortedByDescending { it.startedAt }
+            .map { ConversationHistory.summaryOf(it) }
+    }
+
+    private suspend fun refreshMemory() {
+        memoryEnabledInternal.value = memory.isEnabled()
+        memoriesInternal.value = memory.list()
+    }
+
+    private fun showLatest(conversation: Conversation) {
+        userLineInternal.value = conversation.messages.lastOrNull { it.author == Author.User }?.text.orEmpty()
+        iconLineInternal.value = conversation.messages.lastOrNull { it.author == Author.Assistant }?.text.orEmpty()
+    }
+
+    private fun still(generation: Int, turnId: Long): Boolean {
+        if (levelGeneration != generation) return false
+        return ownsTurn(turnId)
+    }
+
+    private fun ownsTurn(turnId: Long): Boolean {
+        val active = when (val state = appStateInternal.value) {
+            is AppState.Listening -> state.turnId
+            is AppState.Thinking -> state.turnId
+            is AppState.Speaking -> state.turnId
+            else -> return false
+        }
+        return active == turnId
+    }
+
+    private fun newGeneration(): Int {
+        levelGeneration += 1
+        return levelGeneration
+    }
+
+    private fun reject(message: String): Result<AppState> {
+        rejectionInternal.value = message
+        return Result.failure(IllegalStateException(message))
+    }
+
+    companion object {
+        fun factory(context: Context): ViewModelProvider.Factory {
+            return object : ViewModelProvider.Factory {
+                override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                    val turns = AtomicLong(0)
+                    val settings = EncryptedSettingsRepository(context.applicationContext)
+                    val initial = runBlocking { settings.get() }
+                    val gemini = GeminiProvider(settings)
+                    val manager = AIManager(
+                        settings = settings,
+                        demo = DemoProvider(),
+                        gemini = gemini,
+                    )
+                    val model = MainViewModel(
+                        machine = AppStateMachine { turns.incrementAndGet() },
+                        speechInput = SpeechInputGate(),
+                        synthesizer = AndroidSpeechSynthesizer(context.applicationContext),
+                        aiManager = manager,
+                        settings = settings,
+                        initialSettings = initial,
+                        gemini = gemini,
+                        conversations = RoomConversationRepository.create(context.applicationContext),
+                        liveSpeech = RecognizerSpeechInput(context.applicationContext),
+                        microphone = AndroidMicrophonePermission(context.applicationContext),
+                        playback = OutputMixPlaybackCapture(),
+                        memory = RoomMemoryRepository.create(context.applicationContext),
+                    )
+                    @Suppress("UNCHECKED_CAST")
+                    return model as T
+                }
+            }
+        }
+    }
+}
+
+private const val VOICE_PREVIEW_TURN = -1L
+
+internal const val VOICE_PREVIEW_SENTENCE = "Hello, I am ICON."
+
+private const val MIN_VOICE_RATE = 0.25f
+private const val MAX_VOICE_RATE = 2f
+private const val MAX_VISUAL_SENSITIVITY = 4f
+
+internal const val DEMO_LISTEN_MILLIS = 1_500L
+internal const val DEMO_THINK_MILLIS = 1_200L
+internal const val DEMO_ALERT_MILLIS = 2_000L
+internal const val FAILURE_ALERT_MILLIS = 2_500L
+internal const val DEMO_LEVEL_FRAME_MILLIS = 40L
+
+internal fun speakingMillis(sentence: String): Long {
+    return (sentence.length * 55L).coerceIn(800L, 8_000L)
+}
+
+internal fun syllableAmplitude(elapsedMillis: Long): Float {
+    val period = 220L
+    val position = (elapsedMillis % period).toFloat() / period.toFloat()
+    return if (position < 0.3f) {
+        position / 0.3f
+    } else {
+        ((1f - (position - 0.3f) / 0.7f) * 0.35f).coerceIn(0f, 1f)
+    }
+}
+
+fun statusLabel(state: AppState): String = when (state) {
+    AppState.Idle -> "Ready"
+    is AppState.Listening -> "Listening"
+    is AppState.Thinking -> "Thinking"
+    is AppState.Speaking -> "Speaking"
+    is AppState.Alert -> "Alert"
+}
+
+/**
+ * What the voice chrome draws. The smoothed audio level is not a field,
+ * so a new level does not rebuild this snapshot.
+ */
+data class VoiceChrome(
+    val status: String,
+    val userLine: String,
+    val iconLine: String,
+    val sessionActive: Boolean,
+)
+
+fun voiceChrome(
+    state: AppState,
+    userLine: String,
+    iconLine: String,
+    sessionActive: Boolean,
+): VoiceChrome {
+    return VoiceChrome(
+        status = statusLabel(state),
+        userLine = userLine,
+        iconLine = iconLine,
+        sessionActive = sessionActive,
+    )
+}
+
+fun microphoneIsLive(state: AppState): Boolean = state is AppState.Listening
+
+internal val demoTranscript = listOf(
+    "Hey ICON, what is on my calendar today?" to "You have a clear morning and one call at three.",
+    "Remind me to stretch in an hour." to "I will remind you to stretch in an hour.",
+    "How is the weather outside?" to "It is cool and clear outside right now.",
+)

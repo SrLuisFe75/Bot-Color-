@@ -19,3 +19,19 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# Android / Gradle
+.gradle/
+**/build/
+local.properties
+*.iml
+.idea/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.ap_
+*.aab
+keystore.properties
+*.jks
+*.keystore
