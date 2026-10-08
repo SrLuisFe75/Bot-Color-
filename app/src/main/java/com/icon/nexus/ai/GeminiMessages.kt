@@ -36,7 +36,10 @@ internal fun geminiSystemInstruction(
             if (!trait.endsWith('.')) append('.')
             append(' ')
         }
-        append("Reply in natural spoken sentences. Do not use Markdown. Do not use symbol lists.")
+        append("You are a sophisticated companion. ")
+        append("Reply in the language the user just used. ")
+        append("Reply in natural spoken sentences. Do not use Markdown. Do not use symbol lists. ")
+        append("Do not announce that you are an AI.")
         if (facts.isNotEmpty()) {
             append(" The user asked you to keep these facts: ")
             facts.forEach { fact ->
@@ -64,6 +67,10 @@ internal fun replyInstruction(language: ReplyLanguage, followLatest: Boolean): S
         ""
     }
     return line + translate + latest
+}
+
+internal fun logIconFailure(message: String, error: Throwable? = null) {
+    runCatching { android.util.Log.e("ICON", message, error) }
 }
 
 internal fun geminiFailureMessage(httpCode: Int?, error: Throwable?): String {

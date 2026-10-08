@@ -11,6 +11,7 @@ import com.icon.nexus.ai.AIRequest
 import com.icon.nexus.ai.DemoProvider
 import com.icon.nexus.ai.GeminiMessages
 import com.icon.nexus.ai.GeminiProvider
+import com.icon.nexus.ai.logIconFailure
 import com.icon.nexus.audio.AndroidMicrophonePermission
 import com.icon.nexus.audio.AudioAnalyzer
 import com.icon.nexus.audio.MicrophonePermission
@@ -21,6 +22,7 @@ import com.icon.nexus.audio.RecognizerSpeechInput
 import com.icon.nexus.audio.UnavailablePlaybackCapture
 import com.icon.nexus.audio.UtteranceEnergy
 import com.icon.nexus.audio.SpeechEvent
+import com.icon.nexus.audio.SpeechFailure
 import com.icon.nexus.audio.SpeechInput
 import com.icon.nexus.audio.SpeechInputGate
 import com.icon.nexus.audio.SpeechMessages
@@ -176,6 +178,9 @@ class MainViewModel(
     private var lastReplyLanguage = ReplyLanguage.English
     private var voiceOverridden = false
 
+    private val voiceSessionInternal = MutableStateFlow(false)
+    val voiceSessionActive: StateFlow<Boolean> = voiceSessionInternal.asStateFlow()
+
     private val visualSensitivityInternal = MutableStateFlow(initialSettings.visualSensitivity)
     val visualSensitivity: StateFlow<Float> = visualSensitivityInternal.asStateFlow()
 
@@ -260,6 +265,44 @@ class MainViewModel(
     private var demoJob: Job? = null
     private var chatJob: Job? = null
 
+    /**
+     * Opens a voice session and listens once. Later replies return to
+     * Listening on their own. Entering the Voice screen does not call this.
+     * Demo mode keeps the local timeline and does not loop the recognizer.
+     */
+    fun startVoiceSession() {
+        if (demoModeInternal.value) {
+            onMicClicked()
+            return
+        }
+        when (appStateInternal.value) {
+            AppState.Idle -> {
+                voiceSessionInternal.value = true
+                requestLiveListening()
+            }
+            is AppState.Thinking, is AppState.Speaking -> interruptToListening()
+            is AppState.Listening, is AppState.Alert -> Unit
+        }
+    }
+
+    /**
+     * Stops recognition and speech, returns to Ready, and leaves the mic
+     * closed. Listening does not resume after this.
+     */
+    fun endVoiceSession() {
+        voiceSessionInternal.value = false
+        stopDemoWork()
+        cancelChat()
+        cancelAlertTimer()
+        abandonSpeech()
+        microphoneExplanationInternal.value = false
+        liveSpeech.stopListening()
+        speechInput.stopListening()
+        if (appStateInternal.value !is AppState.Idle) {
+            dispatch(StateTransition.ToIdle)
+        }
+    }
+
     fun onMicClicked() {
         if (!demoModeInternal.value) {
             when (appStateInternal.value) {
@@ -314,6 +357,7 @@ class MainViewModel(
      * Call this when the app goes to the background.
      */
     fun onAppBackgrounded(): Result<AppState> {
+        voiceSessionInternal.value = false
         endCinematic()
         stopDemoWork()
         cancelChat()
@@ -871,7 +915,11 @@ class MainViewModel(
             is SpeechEvent.Result -> {
                 val text = event.text.trim()
                 if (text.isEmpty()) {
-                    enterAlert(SpeechMessages.EMPTY)
+                    if (voiceSessionInternal.value) {
+                        reopenSessionListening()
+                    } else {
+                        enterAlert(SpeechMessages.EMPTY)
+                    }
                 } else {
                     val generation = beginChatTurn()
                     chatJob = viewModelScope.launch {
@@ -879,7 +927,13 @@ class MainViewModel(
                     }
                 }
             }
-            is SpeechEvent.Failure -> enterAlert(speechErrorMessage(event.reason))
+            is SpeechEvent.Failure -> {
+                if (voiceSessionInternal.value && event.reason == SpeechFailure.NoMatch) {
+                    reopenSessionListening()
+                } else {
+                    enterAlert(speechErrorMessage(event.reason))
+                }
+            }
         }
     }
 
@@ -960,7 +1014,21 @@ class MainViewModel(
         if (turnId != speechTurnId || !replyFinished || pendingUtterances > 0) return
         if (appStateInternal.value is AppState.Speaking && ownsTurn(turnId)) {
             restoreAutoVoice()
+            if (voiceSessionInternal.value && !demoModeInternal.value) {
+                dispatch(StateTransition.ToListening)
+            } else {
+                dispatch(StateTransition.ToIdle)
+            }
+        }
+    }
+
+    private fun reopenSessionListening() {
+        if (!voiceSessionInternal.value || demoModeInternal.value) return
+        if (appStateInternal.value is AppState.Listening) {
             dispatch(StateTransition.ToIdle)
+        }
+        if (appStateInternal.value is AppState.Idle) {
+            requestLiveListening()
         }
     }
 
@@ -1028,6 +1096,7 @@ class MainViewModel(
      */
     private fun enterAlert(message: String) {
         if (appStateInternal.value is AppState.Alert) return
+        voiceSessionInternal.value = false
         abandonSpeech()
         if (dispatch(StateTransition.ToAlert(message)).isFailure) return
         cancelAlertTimer()
@@ -1072,6 +1141,7 @@ class MainViewModel(
             val current = settings.get()
             if (chatGeneration.get() != generation || !ownsTurn(turnId)) return
             if (current.apiKey.isBlank()) {
+                logIconFailure(GeminiMessages.BLANK_KEY)
                 enterAlert(GeminiMessages.BLANK_KEY)
                 return
             }
@@ -1127,11 +1197,14 @@ class MainViewModel(
                         writeIcon(generation, turnId, iconLineInternal.value)
                     }
                     is AIEvent.Failed -> {
-                        enterAlert(event.message.ifBlank { GeminiMessages.EMPTY })
+                        val message = event.message.ifBlank { GeminiMessages.EMPTY }
+                        logIconFailure(message)
+                        enterAlert(message)
                     }
                     is AIEvent.Completed -> {
                         val reply = iconLineInternal.value.trim()
                         if (reply.isEmpty()) {
+                            logIconFailure(GeminiMessages.EMPTY)
                             enterAlert(GeminiMessages.EMPTY)
                             return@collect
                         }
@@ -1145,8 +1218,9 @@ class MainViewModel(
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Throwable) {
+        } catch (error: Throwable) {
             if (chatGeneration.get() == generation && ownsTurn(turnId)) {
+                logIconFailure(GeminiMessages.OFFLINE, error)
                 enterAlert(GeminiMessages.OFFLINE)
             }
         } finally {
@@ -1323,6 +1397,31 @@ fun statusLabel(state: AppState): String = when (state) {
     is AppState.Thinking -> "Thinking"
     is AppState.Speaking -> "Speaking"
     is AppState.Alert -> "Alert"
+}
+
+/**
+ * What the voice chrome draws. The smoothed audio level is not a field,
+ * so a new level does not rebuild this snapshot.
+ */
+data class VoiceChrome(
+    val status: String,
+    val userLine: String,
+    val iconLine: String,
+    val sessionActive: Boolean,
+)
+
+fun voiceChrome(
+    state: AppState,
+    userLine: String,
+    iconLine: String,
+    sessionActive: Boolean,
+): VoiceChrome {
+    return VoiceChrome(
+        status = statusLabel(state),
+        userLine = userLine,
+        iconLine = iconLine,
+        sessionActive = sessionActive,
+    )
 }
 
 fun microphoneIsLive(state: AppState): Boolean = state is AppState.Listening

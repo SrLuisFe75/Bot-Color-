@@ -80,6 +80,8 @@ Performance. A heap class below 128 MB allocates 24 motes once; 128 MB and above
 
 ICON CORE uses electric blue, deep blue, indigo, violet, luminous cyan, and white highlights. Alert pulses violet and cyan. Amber is not the alert color. Colors blend between states. Auto, Español, and English are pipeline languages: Español and English pin recognition, speech, and the Gemini reply; Auto detects Spanish or English from the latest text and follows that language on the next turn.
 
+Home shows ICON CORE, a short status, and Talk to ICON. Voice is a separate session: Start listens once, a finished reply returns to Listening on its own, and End session closes the microphone. Conversations lists past threads. Cinematic and Settings are their own screens.
+
 ## Verification
 
 No emulator is installed in this environment, so the debug APK was not installed and a demo mic cycle was not run on a device.
@@ -164,13 +166,15 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ### Uso
 
-Con Demo, un toque en Mic recorre Listening, Thinking y Speaking con una frase fija y vuelve a Ready. Una pulsación larga en Idle muestra Alert un momento. Una pulsación larga en Speaking interrumpe ese turno y pasa a Listening.
+Inicio muestra ICON CORE, el estado corto y Talk to ICON. Voice es la sesión. Conversations lista los hilos. Cinematic y Settings son pantallas propias.
 
-Con Gemini, Mic abre el micrófono para una sola frase. La marca Live aparece solo junto a Listening. Al terminar, al cancelar o al ir la app a segundo plano, el micrófono se cierra. Un segundo toque en Listening vuelve a Idle. Durante Thinking o Speaking el toque corto no abre el micrófono; la pulsación larga cancela el turno y solo entonces escucha. La respuesta se parte en frases y la dice el TTS de Android.
+En Voice, con Demo, Start recorre Listening, Thinking y Speaking con una frase fija y vuelve a Ready. End session cierra la sesión.
 
-Conversation, en Demo, muestra u oculta la transcripción. Fuera de Demo abre la lista de hilos: la primera línea y la hora, tocar para seguir, Delete para borrar. New conversation deja un hilo vacío y no borra el anterior. Borrar el hilo abierto crea uno nuevo vacío. Las sesiones Demo no se guardan.
+Con Gemini, Start abre la sesión y escucha. Al terminar la frase, Gemini responde, el TTS de Android la dice, y al acabar el habla vuelve a Listening sin otro toque. End session detiene el reconocedor y la voz, vuelve a Ready y deja el micrófono cerrado. Un mensaje de texto en esa pantalla usa el mismo camino y, si la sesión sigue activa, vuelve a Listening. Si falta la clave o la llamada falla, el estado pasa a Alert.
 
-Cinematic mueve la cámara sobre ICON CORE unos 30 segundos. El núcleo sigue reaccionando. Se ocultan el estado, el micrófono y el resto de controles; Cinematic se queda. Un segundo toque, o un toque en el campo, vuelve con suavidad y restituye los controles.
+Conversations muestra la primera línea y la hora. Resume abre el hilo. Delete lo borra. New conversation deja un hilo vacío. Las sesiones Demo no se guardan.
+
+Cinematic mueve la cámara sobre ICON CORE unos 30 segundos. Close vuelve a Inicio.
 
 Memory, desde Settings, tiene el interruptor “Remember what I ask you to keep.” Empieza apagado. Los hechos se escriben ahí; no se extraen del chat. Solo si está encendido viajan en la instrucción de Gemini.
 

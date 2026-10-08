@@ -28,9 +28,38 @@ fun IconNavHost(viewModel: MainViewModel) {
             )
         }
         composable(MAIN_ROUTE) {
-            MainScreen(
+            HomeScreen(
                 viewModel = viewModel,
+                onTalk = { navController.navigate(VOICE_ROUTE) },
                 onOpenSettings = { navController.navigate("settings") },
+                onOpenCinematic = { navController.navigate(CINEMATIC_ROUTE) },
+            )
+        }
+        composable(VOICE_ROUTE) {
+            VoiceScreen(
+                viewModel = viewModel,
+                onHome = {
+                    viewModel.endVoiceSession()
+                    navController.popBackStack()
+                },
+                onConversations = { navController.navigate(CONVERSATIONS_ROUTE) },
+            )
+        }
+        composable(CONVERSATIONS_ROUTE) {
+            ConversationsScreen(
+                viewModel = viewModel,
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable(CINEMATIC_ROUTE) {
+            CinematicScreen(
+                viewModel = viewModel,
+                onClose = {
+                    if (viewModel.cinematicTour.value != null || viewModel.cinematicReturning.value) {
+                        viewModel.showChrome()
+                    }
+                    navController.popBackStack()
+                },
             )
         }
         composable("settings") {
