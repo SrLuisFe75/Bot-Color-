@@ -12,10 +12,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,6 +54,7 @@ fun SettingsScreen(
     val showConversation by viewModel.transcriptStartsVisible.collectAsStateWithLifecycle()
     val visualSensitivity by viewModel.visualSensitivity.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
+    var confirmDelete by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -182,15 +185,66 @@ fun SettingsScreen(
         )
         Category("PRIVACY")
         Text(
-            text = "Settings, including the Gemini API key, stay in encrypted storage on this device. Conversation history stays in the app database. Demo sessions are not saved. Memories stay in a separate database, and only after you turn remembering on. Spoken replies use Android text-to-speech on the device.",
+            text = "Conversation history, memories you choose to keep, settings, and the API key stay on this device. The API key is encrypted.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.82f),
         )
         Text(
-            text = "Demo runs on this device and does not contact Gemini. With Gemini, your message, the conversation so far, the assistant name, the personality, and any facts you asked ICON to keep are sent to Google. The API key goes only in the request header. Speech recognition prefers on-device recognition and may use the network if the device cannot recognize offline.",
+            text = "A request is sent only when Gemini is the provider. That request includes the message text and the memories you chose to keep. The key goes in the header.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.82f),
         )
+        Text(
+            text = "Speech recognition uses the Android recognizer. It may use the network if offline recognition is unavailable.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.82f),
+        )
+        Text(
+            text = "Speech synthesis stays on this device. The visualizer stays on this device. Demo mode sends nothing.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.82f),
+        )
+        Text(
+            text = "The microphone opens for one utterance. It closes when listening ends, when you cancel, or when the app is in the background. ICON does not record audio to a file.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.82f),
+        )
+        Text(
+            text = "Delete local data",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.tertiary,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { confirmDelete = true }
+                .semantics { contentDescription = "Delete local data" }
+                .padding(vertical = 8.dp),
+        )
+        if (confirmDelete) {
+            AlertDialog(
+                onDismissRequest = { confirmDelete = false },
+                title = { Text("Delete local data") },
+                text = {
+                    Text(
+                        "This deletes conversations and memories and clears the API key. One new empty conversation is left.",
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            confirmDelete = false
+                            viewModel.deleteLocalData()
+                        },
+                    ) {
+                        Text("Delete")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmDelete = false }) {
+                        Text("Cancel")
+                    }
+                },
+            )
+        }
         Category("ABOUT")
         Text(
             text = "ICON",

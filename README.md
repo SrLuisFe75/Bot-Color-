@@ -66,6 +66,10 @@ Settings is one screen in the ICON theme, opened from the settings control. The 
 
 The first launch shows a short introduction, then never again after the person finishes or skips to the end. The flag stays in the existing settings store. The pages are the name, four lines, the microphone explanation and permission, Demo or Gemini with a masked key only for Gemini, a voice language and a spoken preview that can be stopped, and one ICON CORE card. Meet ICON opens the main screen. A later cold start opens that screen directly. Denying the microphone does not block the end. Settings is unchanged.
 
+## Phase 16
+
+Privacy on the settings screen states what stays on the device, what a Gemini request sends, and that speech recognition may use the network. Speech synthesis and the visualizer stay on device. Demo mode sends nothing. The microphone opens for one utterance and ICON does not record audio to a file. While Listening, a live-mic mark sits next to the status word. Delete local data asks first, then removes conversations and memories, clears the API key, and leaves one new empty thread. Demo mode and the onboarding flag stay.
+
 ## Build
 
 ```bash

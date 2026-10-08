@@ -44,6 +44,7 @@ import com.icon.nexus.audio.SpeechMessages
 import com.icon.nexus.domain.AppState
 import com.icon.nexus.visualizer.IconCoreScene
 import com.icon.nexus.viewmodel.MainViewModel
+import com.icon.nexus.viewmodel.microphoneIsLive
 import com.icon.nexus.viewmodel.statusLabel
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -121,12 +122,31 @@ fun MainScreen(
                         iconLine = iconLine,
                     )
                 }
-                Text(
-                    text = statusLabel(state),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = statusColor,
-                    textAlign = TextAlign.Center,
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = statusLabel(state),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = statusColor,
+                        textAlign = TextAlign.Center,
+                    )
+                    if (microphoneIsLive(state)) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.secondary)
+                                .semantics { contentDescription = "Live microphone" },
+                        )
+                        Text(
+                            text = "Live",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.secondary,
+                        )
+                    }
+                }
                 if (!demoMode && !alertMessage.isNullOrBlank()) {
                     Text(
                         text = alertMessage,

@@ -477,6 +477,46 @@ class MainViewModel(
         }
     }
 
+    /**
+     * Removes every conversation and stored memory, clears the API key, and
+     * leaves one new empty thread. Demo mode and the onboarding flag stay.
+     */
+    fun deleteLocalData() {
+        stopDemoWork()
+        cancelChat()
+        cancelAlertTimer()
+        abandonSpeech()
+        liveSpeech.stopListening()
+        if (liveSpeech !== speechInput) {
+            speechInput.stopListening()
+        }
+        userLineInternal.value = ""
+        iconLineInternal.value = ""
+        apiKeyInternal.value = ""
+        if (appStateInternal.value !is AppState.Idle) {
+            dispatch(StateTransition.ToIdle)
+        }
+        viewModelScope.launch {
+            settingsMutex.withLock {
+                settings.update { current -> current.copy(apiKey = "") }
+            }
+            memory.clear()
+            refreshMemory()
+            conversationMutex.withLock {
+                conversations.list().map { it.id }.forEach { id ->
+                    conversations.delete(id)
+                }
+                val created = Conversation(
+                    id = conversationIds(),
+                    startedAt = clock(),
+                )
+                conversations.save(created)
+                activeConversationId = created.id
+                publishHistory()
+            }
+        }
+    }
+
     fun toggleTranscript() {
         transcriptVisibleInternal.value = !transcriptVisibleInternal.value
     }
@@ -1257,6 +1297,8 @@ fun statusLabel(state: AppState): String = when (state) {
     is AppState.Speaking -> "Speaking"
     is AppState.Alert -> "Alert"
 }
+
+fun microphoneIsLive(state: AppState): Boolean = state is AppState.Listening
 
 internal val demoTranscript = listOf(
     "Hey ICON, what is on my calendar today?" to "You have a clear morning and one call at three.",
