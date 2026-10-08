@@ -15,7 +15,11 @@ import com.icon.nexus.audio.AndroidMicrophonePermission
 import com.icon.nexus.audio.AudioAnalyzer
 import com.icon.nexus.audio.MicrophonePermission
 import com.icon.nexus.audio.AndroidSpeechSynthesizer
+import com.icon.nexus.audio.OutputMixPlaybackCapture
+import com.icon.nexus.audio.PlaybackCapture
 import com.icon.nexus.audio.RecognizerSpeechInput
+import com.icon.nexus.audio.UnavailablePlaybackCapture
+import com.icon.nexus.audio.UtteranceEnergy
 import com.icon.nexus.audio.SpeechEvent
 import com.icon.nexus.audio.SpeechInput
 import com.icon.nexus.audio.SpeechInputGate
@@ -55,8 +59,10 @@ import kotlin.math.min
  * current turn id: a newer turn cancels stale level and transcript writes.
  * With demo mode off, [sendText] and a one-shot microphone utterance stream
  * a Gemini reply into the transcript. Finished sentences are spoken with
- * Android text-to-speech, then the app returns to Idle. Demo mode keeps the
- * timed local timeline and does not speak those sentences.
+ * Android text-to-speech, then the app returns to Idle. While that speech
+ * plays, output-mix energy drives [audioLevel] through [analyzer]. Demo mode
+ * keeps the timed local timeline, the simulated syllable level, and does
+ * not speak those sentences.
  *
  * [appState] is the only phase SpeechInput, Gemini, text-to-speech, the
  * transcript, and the presence follow. Exceptional failures enter Alert
@@ -78,6 +84,7 @@ class MainViewModel(
     private val conversations: ConversationRepository = InMemoryConversationRepository(),
     private val liveSpeech: SpeechInput = speechInput,
     private val microphone: MicrophonePermission = MicrophonePermission { true },
+    private val playback: PlaybackCapture = UnavailablePlaybackCapture,
 ) : ViewModel() {
     private val appStateInternal = MutableStateFlow(machine.current)
     val appState: StateFlow<AppState> = appStateInternal.asStateFlow()
@@ -120,11 +127,23 @@ class MainViewModel(
     private var replyFinished = false
     private val sentenceBuffer = StringBuilder()
     private var alertJob: Job? = null
+    private var captureRequested = false
+    private var usingFallback = false
 
     init {
+        playback.setLevelListener { level -> acceptPlaybackEnergy(level) }
         liveSpeech.setListener { event -> onSpeechEvent(event) }
         synthesizer.setPlaybackListener(object : SpeechPlaybackListener {
+            override fun onUtteranceStarted(turnId: Long) {
+                onPlaybackFallback(turnId, UtteranceEnergy.onStart())
+            }
+
+            override fun onUtteranceRange(turnId: Long) {
+                onPlaybackFallback(turnId, UtteranceEnergy.onRangeStart())
+            }
+
             override fun onUtteranceFinished(turnId: Long) {
+                onPlaybackFallback(turnId, UtteranceEnergy.onDone())
                 onSpeechFinished(turnId)
             }
 
@@ -216,6 +235,16 @@ class MainViewModel(
         synthesizer.release()
         liveSpeech.stopListening()
         super.onCleared()
+    }
+
+    /**
+     * Raw output-mix energy for the current live Speaking turn. Ignored
+     * during demo mode and while the utterance envelope is the source.
+     */
+    internal fun acceptPlaybackEnergy(raw: Float) {
+        if (usingFallback || demoModeInternal.value || !captureRequested) return
+        if (appStateInternal.value !is AppState.Speaking) return
+        audioLevelInternal.value = analyzer.next(raw)
     }
 
     fun acceptMicrophoneExplanation() {
@@ -320,6 +349,7 @@ class MainViewModel(
         val current = appStateInternal.value
         if (current is AppState.Speaking && AppStateMachine.isLegal(current, target)) {
             synthesizer.stop()
+            releasePlayback(resetLevel = !demoModeInternal.value)
         }
         val result = machine.transition(target)
         result.onSuccess { next ->
@@ -339,6 +369,7 @@ class MainViewModel(
             appStateInternal.value = next
             rejectionInternal.value = null
             routeSpeech(next)
+            engagePlayback(next)
         }
         result.onFailure { error ->
             rejectionInternal.value = error.message
@@ -559,7 +590,44 @@ class MainViewModel(
         pendingUtterances = 0
         replyFinished = false
         sentenceBuffer.clear()
+        releasePlayback(resetLevel = !demoModeInternal.value)
         synthesizer.stop()
+    }
+
+    /**
+     * Live Speaking captures the output mix. Demo Speaking keeps the
+     * simulated syllable level and never asks for a capture. A failed
+     * capture stays in Speaking and follows the utterance envelope.
+     */
+    private fun engagePlayback(next: AppState) {
+        if (demoModeInternal.value || next !is AppState.Speaking) return
+        if (captureRequested) return
+        captureRequested = true
+        analyzer.reset()
+        audioLevelInternal.value = 0f
+        usingFallback = try {
+            !playback.start()
+        } catch (_: Throwable) {
+            true
+        }
+    }
+
+    private fun releasePlayback(resetLevel: Boolean) {
+        if (!captureRequested) return
+        captureRequested = false
+        usingFallback = false
+        playback.release()
+        if (resetLevel) {
+            analyzer.reset()
+            audioLevelInternal.value = 0f
+        }
+    }
+
+    private fun onPlaybackFallback(turnId: Long, sample: Float) {
+        if (!usingFallback || demoModeInternal.value) return
+        val speaking = appStateInternal.value as? AppState.Speaking ?: return
+        if (speaking.turnId != turnId) return
+        audioLevelInternal.value = analyzer.next(sample)
     }
 
     /**
@@ -758,6 +826,7 @@ class MainViewModel(
                         conversations = InMemoryConversationRepository(),
                         liveSpeech = RecognizerSpeechInput(context.applicationContext),
                         microphone = AndroidMicrophonePermission(context.applicationContext),
+                        playback = OutputMixPlaybackCapture(),
                     )
                     @Suppress("UNCHECKED_CAST")
                     return model as T

@@ -22,4 +22,8 @@ interface SpeechPlaybackListener {
     fun onUtteranceFinished(turnId: Long)
 
     fun onSpeechUnavailable() {}
+
+    fun onUtteranceStarted(turnId: Long) {}
+
+    fun onUtteranceRange(turnId: Long) {}
 }

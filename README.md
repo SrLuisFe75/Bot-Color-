@@ -42,6 +42,10 @@ One `AppState` flow drives speech, Gemini, text-to-speech, the transcript, and t
 
 ICON CORE is the only visualizer theme. A full-bleed canvas draws a holographic nucleus, slow elliptical rings, and a capped mote field. Idle, Listening, Thinking, Speaking, and Alert each move that core. Other theme ids resolve to ICON CORE. The screen chrome is unchanged.
 
+## Phase 10
+
+While Speaking with demo mode off, playback energy from audio session 0 drives the smoothed level ICON CORE already uses. The capture is released on Idle, on interrupt, when the app backgrounds, and when speech stops. If that capture cannot start, utterance callbacks rise, hold, and release the same envelope. Demo mode keeps its simulated syllable level.
+
 Cinematic playback is a later phase.
 
 ## Build

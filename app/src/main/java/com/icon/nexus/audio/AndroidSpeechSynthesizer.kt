@@ -133,7 +133,13 @@ class AndroidSpeechSynthesizer(
     }
 
     private fun progressListener() = object : UtteranceProgressListener() {
-        override fun onStart(utteranceId: String?) = Unit
+        override fun onStart(utteranceId: String?) {
+            notifyProgress(utteranceId, started = true)
+        }
+
+        override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
+            notifyProgress(utteranceId, started = false)
+        }
 
         override fun onDone(utteranceId: String?) {
             finish(utteranceId)
@@ -146,6 +152,19 @@ class AndroidSpeechSynthesizer(
 
         override fun onError(utteranceId: String?, errorCode: Int) {
             finish(utteranceId)
+        }
+    }
+
+    private fun notifyProgress(utteranceId: String?, started: Boolean) {
+        if (utteranceId == null) return
+        onMain {
+            val utterance = active[utteranceId] ?: return@onMain
+            if (utterance.epoch != epoch) return@onMain
+            if (started) {
+                listener?.onUtteranceStarted(utterance.turnId)
+            } else {
+                listener?.onUtteranceRange(utterance.turnId)
+            }
         }
     }
 
