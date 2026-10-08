@@ -46,6 +46,10 @@ ICON CORE is the only visualizer theme. A full-bleed canvas draws a holographic 
 
 While Speaking with demo mode off, playback energy from audio session 0 drives the smoothed level ICON CORE already uses. The capture is released on Idle, on interrupt, when the app backgrounds, and when speech stops. If that capture cannot start, utterance callbacks rise, hold, and release the same envelope. Demo mode keeps its simulated syllable level.
 
+## Phase 11
+
+Live chat is stored with Room. A conversation has an id and a start time; each message has a user or ICON role, text, and a timestamp. Launch opens the newest thread and sends it as Gemini context. New conversation starts an empty thread. The conversation control opens a short history list: the first line and the time, tap to continue, swipe or Delete to remove. Deleting the open thread starts a new one. Demo sessions are not saved. The transcript toggle stays on that list.
+
 Cinematic playback is a later phase.
 
 ## Build

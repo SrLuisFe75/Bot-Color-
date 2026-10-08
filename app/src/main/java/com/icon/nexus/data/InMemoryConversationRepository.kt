@@ -4,7 +4,7 @@ import com.icon.nexus.domain.Conversation
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Process-local conversation history. Chats are not written to disk.
+ * Process-local stand-in for tests. Live turns use Room.
  */
 class InMemoryConversationRepository : ConversationRepository {
     private val conversations = ConcurrentHashMap<String, Conversation>()

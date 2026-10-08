@@ -3,7 +3,8 @@ package com.icon.nexus.data
 import com.icon.nexus.domain.Conversation
 
 /**
- * Conversation history. Separate from [com.icon.nexus.memory.MemoryRepository].
+ * Chat history only. Separate from [com.icon.nexus.memory.MemoryRepository].
+ * Live turns use the Room implementation. Demo sessions are not saved.
  */
 interface ConversationRepository {
     suspend fun list(): List<Conversation>

@@ -29,9 +29,12 @@ import com.icon.nexus.audio.SpeechSynthesizer
 import com.icon.nexus.audio.speechErrorMessage
 import com.icon.nexus.audio.splitCompletedSentences
 import com.icon.nexus.data.AppSettings
+import com.icon.nexus.data.ConversationHistory
 import com.icon.nexus.data.ConversationRepository
+import com.icon.nexus.data.ConversationSummary
 import com.icon.nexus.data.EncryptedSettingsRepository
 import com.icon.nexus.data.InMemoryConversationRepository
+import com.icon.nexus.data.history.RoomConversationRepository
 import com.icon.nexus.data.SettingsRepository
 import com.icon.nexus.domain.AppState
 import com.icon.nexus.domain.AppStateMachine
@@ -50,6 +53,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.min
@@ -71,6 +75,9 @@ import kotlin.math.min
  * [onAppBackgrounded] is the background hook. The activity calls it from
  * `onStop` so leaving the foreground returns the app to Idle and cancels
  * an in-flight Gemini call.
+ *
+ * Live chat is stored as conversation history. Launch opens the newest
+ * thread and sends it as Gemini context. Demo sessions are not saved.
  */
 class MainViewModel(
     private val machine: AppStateMachine,
@@ -85,6 +92,8 @@ class MainViewModel(
     private val liveSpeech: SpeechInput = speechInput,
     private val microphone: MicrophonePermission = MicrophonePermission { true },
     private val playback: PlaybackCapture = UnavailablePlaybackCapture,
+    private val clock: () -> Long = { System.currentTimeMillis() },
+    private val conversationIds: () -> String = { UUID.randomUUID().toString() },
 ) : ViewModel() {
     private val appStateInternal = MutableStateFlow(machine.current)
     val appState: StateFlow<AppState> = appStateInternal.asStateFlow()
@@ -122,6 +131,11 @@ class MainViewModel(
     private val microphoneExplanationInternal = MutableStateFlow(false)
     val microphoneExplanation: StateFlow<Boolean> = microphoneExplanationInternal.asStateFlow()
 
+    private val historyInternal = MutableStateFlow<List<ConversationSummary>>(emptyList())
+    val history: StateFlow<List<ConversationSummary>> = historyInternal.asStateFlow()
+
+    private var activeConversationId: String? = null
+
     private var speechTurnId: Long? = null
     private var pendingUtterances = 0
     private var replyFinished = false
@@ -129,6 +143,8 @@ class MainViewModel(
     private var alertJob: Job? = null
     private var captureRequested = false
     private var usingFallback = false
+    private val settingsMutex = Mutex()
+    private val conversationMutex = Mutex()
 
     init {
         playback.setLevelListener { level -> acceptPlaybackEnergy(level) }
@@ -152,10 +168,9 @@ class MainViewModel(
                 markSpeechUnavailable(turnId)
             }
         })
+        viewModelScope.launch { restoreHistory() }
     }
 
-    private val settingsMutex = Mutex()
-    private val conversationMutex = Mutex()
     private val chatGeneration = AtomicInteger(0)
 
     private var scriptIndex = 0
@@ -282,15 +297,77 @@ class MainViewModel(
     fun newConversation() {
         if (demoModeInternal.value) return
         cancelChat()
+        abandonSpeech()
         userLineInternal.value = ""
         iconLineInternal.value = ""
         if (appStateInternal.value !is AppState.Idle) {
             dispatch(StateTransition.ToIdle)
         }
+        val conversation = Conversation(
+            id = conversationIds(),
+            startedAt = clock(),
+        )
+        activeConversationId = conversation.id
         viewModelScope.launch {
             conversationMutex.withLock {
-                conversations.delete(CURRENT_CONVERSATION)
+                conversations.save(conversation)
+                publishHistory()
             }
+        }
+    }
+
+    /**
+     * Loads [id] into the open thread. The next live request sends that
+     * thread as Gemini context.
+     */
+    fun continueConversation(id: String) {
+        if (demoModeInternal.value) return
+        cancelChat()
+        abandonSpeech()
+        if (appStateInternal.value !is AppState.Idle) {
+            dispatch(StateTransition.ToIdle)
+        }
+        viewModelScope.launch {
+            val conversation = conversationMutex.withLock {
+                conversations.get(id)
+            } ?: return@launch
+            activeConversationId = conversation.id
+            showLatest(conversation)
+        }
+    }
+
+    fun deleteConversation(id: String) {
+        if (demoModeInternal.value) return
+        val removingOpen = id == activeConversationId
+        if (removingOpen) {
+            cancelChat()
+            abandonSpeech()
+            userLineInternal.value = ""
+            iconLineInternal.value = ""
+            if (appStateInternal.value !is AppState.Idle) {
+                dispatch(StateTransition.ToIdle)
+            }
+        }
+        viewModelScope.launch {
+            conversationMutex.withLock {
+                conversations.delete(id)
+                if (removingOpen) {
+                    val created = Conversation(
+                        id = conversationIds(),
+                        startedAt = clock(),
+                    )
+                    conversations.save(created)
+                    activeConversationId = created.id
+                }
+                publishHistory()
+            }
+        }
+    }
+
+    fun refreshHistory() {
+        if (demoModeInternal.value) return
+        viewModelScope.launch {
+            conversationMutex.withLock { publishHistory() }
         }
     }
 
@@ -685,21 +762,25 @@ class MainViewModel(
                 return
             }
             val history = conversationMutex.withLock {
-                if (chatGeneration.get() != generation) {
+                if (chatGeneration.get() != generation || demoModeInternal.value) {
                     null
                 } else {
-                    val prior = conversations.get(CURRENT_CONVERSATION)?.messages.orEmpty()
+                    val id = ensureConversation()
+                    val existing = conversations.get(id) ?: Conversation(id = id, startedAt = clock())
+                    val prior = existing.messages
                     conversations.save(
-                        Conversation(
-                            id = CURRENT_CONVERSATION,
+                        existing.copy(
+                            startedAt = existing.startedAt.takeIf { it > 0L } ?: clock(),
                             messages = prior + Message(
                                 id = "user-$turnId",
                                 author = Author.User,
                                 text = text,
                                 turnId = turnId,
+                                timestamp = clock(),
                             ),
                         ),
                     )
+                    publishHistory()
                     prior
                 }
             } ?: return
@@ -721,6 +802,7 @@ class MainViewModel(
                     is AIEvent.Token -> {
                         iconLineInternal.value += event.text
                         absorbSpeech(turnId, event.text)
+                        writeIcon(generation, turnId, iconLineInternal.value)
                     }
                     is AIEvent.Failed -> {
                         enterAlert(event.message.ifBlank { GeminiMessages.EMPTY })
@@ -731,7 +813,7 @@ class MainViewModel(
                             enterAlert(GeminiMessages.EMPTY)
                             return@collect
                         }
-                        saveAssistant(generation, turnId, reply)
+                        writeIcon(generation, turnId, reply)
                         flushSpeech(turnId)
                         if (appStateInternal.value is AppState.Alert) return@collect
                         replyFinished = true
@@ -756,23 +838,68 @@ class MainViewModel(
         }
     }
 
-    private suspend fun saveAssistant(generation: Int, turnId: Long, reply: String) {
+    private suspend fun restoreHistory() {
+        if (demoModeInternal.value) return
+        conversationMutex.withLock {
+            if (activeConversationId != null) return@withLock
+            val recent = conversations.list().maxByOrNull { it.startedAt } ?: return@withLock
+            activeConversationId = recent.id
+            showLatest(recent)
+            publishHistory()
+        }
+    }
+
+    private suspend fun ensureConversation(): String {
+        val current = activeConversationId
+        if (current != null && conversations.get(current) != null) return current
+        if (current != null) {
+            val created = Conversation(id = current, startedAt = clock())
+            conversations.save(created)
+            return current
+        }
+        val recent = conversations.list().maxByOrNull { it.startedAt }
+        if (recent != null) {
+            activeConversationId = recent.id
+            return recent.id
+        }
+        val created = Conversation(id = conversationIds(), startedAt = clock())
+        conversations.save(created)
+        activeConversationId = created.id
+        return created.id
+    }
+
+    private suspend fun writeIcon(generation: Int, turnId: Long, reply: String) {
+        if (demoModeInternal.value || reply.isEmpty()) return
         conversationMutex.withLock {
             if (chatGeneration.get() != generation) return@withLock
-            val prior = conversations.get(CURRENT_CONVERSATION)?.messages.orEmpty()
-            if (prior.any { it.id == "icon-$turnId" }) return@withLock
+            val id = activeConversationId ?: return@withLock
+            val existing = conversations.get(id) ?: return@withLock
+            val messageId = "icon-$turnId"
+            val previous = existing.messages.find { it.id == messageId }
+            val kept = existing.messages.filterNot { it.id == messageId }
             conversations.save(
-                Conversation(
-                    id = CURRENT_CONVERSATION,
-                    messages = prior + Message(
-                        id = "icon-$turnId",
+                existing.copy(
+                    messages = kept + Message(
+                        id = messageId,
                         author = Author.Assistant,
                         text = reply,
                         turnId = turnId,
+                        timestamp = previous?.timestamp ?: clock(),
                     ),
                 ),
             )
         }
+    }
+
+    private suspend fun publishHistory() {
+        historyInternal.value = conversations.list()
+            .sortedByDescending { it.startedAt }
+            .map { ConversationHistory.summaryOf(it) }
+    }
+
+    private fun showLatest(conversation: Conversation) {
+        userLineInternal.value = conversation.messages.lastOrNull { it.author == Author.User }?.text.orEmpty()
+        iconLineInternal.value = conversation.messages.lastOrNull { it.author == Author.Assistant }?.text.orEmpty()
     }
 
     private fun still(generation: Int, turnId: Long): Boolean {
@@ -801,8 +928,6 @@ class MainViewModel(
     }
 
     companion object {
-        private const val CURRENT_CONVERSATION = "current"
-
         fun factory(context: Context): ViewModelProvider.Factory {
             return object : ViewModelProvider.Factory {
                 override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -823,7 +948,7 @@ class MainViewModel(
                         settings = settings,
                         initialSettings = initial,
                         gemini = gemini,
-                        conversations = InMemoryConversationRepository(),
+                        conversations = RoomConversationRepository.create(context.applicationContext),
                         liveSpeech = RecognizerSpeechInput(context.applicationContext),
                         microphone = AndroidMicrophonePermission(context.applicationContext),
                         playback = OutputMixPlaybackCapture(),

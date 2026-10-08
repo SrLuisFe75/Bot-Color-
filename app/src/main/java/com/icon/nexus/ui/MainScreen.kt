@@ -62,6 +62,7 @@ fun MainScreen(viewModel: MainViewModel) {
     val apiKey by viewModel.apiKey.collectAsStateWithLifecycle()
     val geminiModel by viewModel.geminiModel.collectAsStateWithLifecycle()
     val microphoneExplanation by viewModel.microphoneExplanation.collectAsStateWithLifecycle()
+    val history by viewModel.history.collectAsStateWithLifecycle()
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
@@ -70,6 +71,7 @@ fun MainScreen(viewModel: MainViewModel) {
     val scope = rememberCoroutineScope()
     val presenceInteraction = remember { MutableInteractionSource() }
     var settingsOpen by remember { mutableStateOf(false) }
+    var historyOpen by remember { mutableStateOf(false) }
     val alertMessage = (state as? AppState.Alert)?.message
     val statusColor = if (state is AppState.Alert) {
         MaterialTheme.colorScheme.tertiary
@@ -152,7 +154,14 @@ fun MainScreen(viewModel: MainViewModel) {
                 ) {
                     QuietControl(
                         label = "Conversation",
-                        onClick = viewModel::toggleTranscript,
+                        onClick = {
+                            if (demoMode) {
+                                viewModel.toggleTranscript()
+                            } else {
+                                viewModel.refreshHistory()
+                                historyOpen = true
+                            }
+                        },
                     )
                     if (!demoMode) {
                         QuietControl(
@@ -208,6 +217,20 @@ fun MainScreen(viewModel: MainViewModel) {
                 scope.launch { viewModel.setGeminiModel(value) }
             },
             onDismiss = { settingsOpen = false },
+        )
+    }
+
+    if (historyOpen) {
+        HistorySheet(
+            conversations = history,
+            transcriptVisible = transcriptVisible,
+            onToggleTranscript = viewModel::toggleTranscript,
+            onContinue = { id ->
+                viewModel.continueConversation(id)
+                historyOpen = false
+            },
+            onDelete = viewModel::deleteConversation,
+            onDismiss = { historyOpen = false },
         )
     }
 
