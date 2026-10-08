@@ -19,7 +19,7 @@ import com.icon.nexus.R
 private fun outfit(weight: FontWeight): Font = Font(
     resId = R.font.outfit_wght,
     weight = weight,
-    loadingStrategy = FontLoadingStrategy.Blocking,
+    loadingStrategy = FontLoadingStrategy.Async,
     variationSettings = FontVariation.Settings(
         FontVariation.weight(weight.weight),
     ),

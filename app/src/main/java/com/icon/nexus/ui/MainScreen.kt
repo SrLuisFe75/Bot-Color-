@@ -41,6 +41,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.icon.nexus.audio.SpeechMessages
+import com.icon.nexus.camera.CameraTour
 import com.icon.nexus.domain.AppState
 import com.icon.nexus.visualizer.IconCoreScene
 import com.icon.nexus.viewmodel.MainViewModel
@@ -60,8 +61,6 @@ fun MainScreen(
     val transcriptVisible by viewModel.transcriptVisible.collectAsStateWithLifecycle()
     val userLine by viewModel.userLine.collectAsStateWithLifecycle()
     val iconLine by viewModel.iconLine.collectAsStateWithLifecycle()
-    val audioLevel by viewModel.audioLevel.collectAsStateWithLifecycle()
-    val visualSensitivity by viewModel.visualSensitivity.collectAsStateWithLifecycle()
     val demoMode by viewModel.demoMode.collectAsStateWithLifecycle()
     val microphoneExplanation by viewModel.microphoneExplanation.collectAsStateWithLifecycle()
     val history by viewModel.history.collectAsStateWithLifecycle()
@@ -84,12 +83,11 @@ fun MainScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        IconCoreScene(
+        Presence(
+            viewModel = viewModel,
             state = state,
-            audioLevel = audioLevel,
             tour = cinematicTour,
             returning = cinematicReturning,
-            sensitivity = visualSensitivity,
             modifier = Modifier
                 .fillMaxSize()
                 .then(
@@ -264,6 +262,30 @@ fun MainScreen(
             },
         )
     }
+}
+
+/**
+ * Reads the voice level here so a new sample redraws the core without
+ * rebuilding the status line, the mic, and the rest of the chrome.
+ */
+@Composable
+private fun Presence(
+    viewModel: MainViewModel,
+    state: AppState,
+    tour: CameraTour?,
+    returning: Boolean,
+    modifier: Modifier,
+) {
+    val audioLevel by viewModel.audioLevel.collectAsStateWithLifecycle()
+    val visualSensitivity by viewModel.visualSensitivity.collectAsStateWithLifecycle()
+    IconCoreScene(
+        state = state,
+        audioLevel = audioLevel,
+        tour = tour,
+        returning = returning,
+        sensitivity = visualSensitivity,
+        modifier = modifier,
+    )
 }
 
 @Composable

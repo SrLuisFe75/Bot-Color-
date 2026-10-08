@@ -8,16 +8,17 @@ import android.graphics.Path
 import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
-import androidx.compose.foundation.Canvas
+import android.view.Choreographer
+import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.node.DrawModifierNode
+import androidx.compose.ui.node.ModifierNodeElement
+import androidx.compose.ui.node.invalidateDraw
+import androidx.compose.ui.platform.InspectorInfo
 import androidx.compose.ui.platform.LocalContext
 import com.icon.nexus.camera.CameraTour
 import com.icon.nexus.camera.CinematicCamera
@@ -28,7 +29,6 @@ import com.icon.nexus.ui.theme.IconPalette
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.isActive
 import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
@@ -298,23 +298,95 @@ fun IconCoreScene(
     }
     val planner = remember { ShotPlanner() }
     val clock = remember { CameraClock() }
-    val theme = VisualizerThemes.forId(themeId)
-    remember(themeId) { engine.applyTheme(theme) }
-    var frame by remember { mutableLongStateOf(0L) }
-    LaunchedEffect(Unit) {
-        while (isActive) {
-            withFrameNanos { nanos -> frame = nanos }
-        }
+    Box(
+        modifier = modifier.then(
+            CoreDrawElement(
+                engine = engine,
+                planner = planner,
+                clock = clock,
+                state = state,
+                audioLevel = audioLevel,
+                themeId = themeId,
+                tour = tour,
+                returning = returning,
+                sensitivity = sensitivity,
+            ),
+        ),
+    )
+}
+
+/**
+ * Draws ICON CORE from the choreographer. Frame time stays on this node, so
+ * a new frame invalidates this draw only and does not rebuild the chrome text.
+ */
+private data class CoreDrawElement(
+    val engine: IconCoreEngine,
+    val planner: ShotPlanner,
+    val clock: CameraClock,
+    val state: AppState,
+    val audioLevel: Float,
+    val themeId: VisualThemeId,
+    val tour: CameraTour?,
+    val returning: Boolean,
+    val sensitivity: Float,
+) : ModifierNodeElement<CoreDrawNode>() {
+    override fun create(): CoreDrawNode = CoreDrawNode(engine, planner, clock)
+
+    override fun update(node: CoreDrawNode) {
+        node.state = state
+        node.audioLevel = audioLevel
+        node.themeId = themeId
+        node.tour = tour
+        node.returning = returning
+        node.sensitivity = sensitivity
+        node.engine.applyTheme(VisualizerThemes.forId(themeId))
     }
-    Canvas(modifier = modifier) {
+
+    override fun InspectorInfo.inspectableProperties() {
+        name = "iconCore"
+    }
+}
+
+private class CoreDrawNode(
+    val engine: IconCoreEngine,
+    private val planner: ShotPlanner,
+    private val clock: CameraClock,
+) : Modifier.Node(), DrawModifierNode, Choreographer.FrameCallback {
+    var state: AppState = AppState.Idle
+    var audioLevel: Float = 0f
+    var themeId: VisualThemeId = VisualThemeId.Core
+    var tour: CameraTour? = null
+    var returning: Boolean = false
+    var sensitivity: Float = 1f
+    private var frameNanos: Long = 0L
+
+    override fun onAttach() {
+        Choreographer.getInstance().postFrameCallback(this)
+    }
+
+    override fun onDetach() {
+        Choreographer.getInstance().removeFrameCallback(this)
+    }
+
+    override fun doFrame(frameTimeNanos: Long) {
+        if (!isAttached) return
+        frameNanos = frameTimeNanos
+        invalidateDraw()
+        Choreographer.getInstance().postFrameCallback(this)
+    }
+
+    override fun ContentDrawScope.draw() {
+        val width = size.width
+        val height = size.height
+        if (width < 1f || height < 1f) return
         engine.submitAmplitude(visualLevel(audioLevel, sensitivity))
         engine.draw(
             canvas = drawContext.canvas.nativeCanvas,
-            width = size.width,
-            height = size.height,
+            width = width,
+            height = height,
             appState = state,
-            nowNanos = frame,
-            camera = clock.sample(planner, tour, returning, frame),
+            nowNanos = frameNanos,
+            camera = clock.sample(planner, tour, returning, frameNanos),
         )
     }
 }
