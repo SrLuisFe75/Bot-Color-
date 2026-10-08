@@ -54,6 +54,7 @@ fun ConversationsScreen(
         Text(
             text = "Conversations",
             style = MaterialTheme.typography.headlineSmall,
+            color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.semantics { contentDescription = "Conversations" },
         )
         Text(
