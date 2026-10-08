@@ -172,7 +172,7 @@ En Voice, con Demo, Start recorre Listening, Thinking y Speaking con una frase f
 
 Con Gemini, Start abre la sesión y escucha. Al terminar la frase, Gemini responde, el TTS de Android la dice, y al acabar el habla vuelve a Listening sin otro toque. End session detiene el reconocedor y la voz, vuelve a Ready y deja el micrófono cerrado. Un mensaje de texto en esa pantalla usa el mismo camino y, si la sesión sigue activa, vuelve a Listening. Si falta la clave o la llamada falla, el estado pasa a Alert.
 
-Conversations muestra la primera línea y la hora. Resume abre el hilo. Delete lo borra. New conversation deja un hilo vacío. Las sesiones Demo no se guardan.
+Conversations muestra la primera línea y la hora. Open abre el hilo. Delete lo borra. New conversation deja un hilo vacío. Las sesiones Demo no se guardan.
 
 Cinematic mueve la cámara sobre ICON CORE unos 30 segundos. Close vuelve a Inicio.
 

@@ -96,12 +96,12 @@ fun ConversationsScreen(
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(22.dp)) {
                     Text(
-                        text = "Resume",
+                        text = "Open",
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier
                             .clickable { viewModel.continueConversation(summary.id) }
-                            .semantics { contentDescription = "Resume ${summary.firstLine}" }
+                            .semantics { contentDescription = "Open ${summary.firstLine}" }
                             .padding(vertical = 4.dp),
                     )
                     Text(
