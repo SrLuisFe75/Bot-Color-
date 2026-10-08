@@ -28,6 +28,8 @@ import com.icon.nexus.audio.SpeechPlaybackListener
 import com.icon.nexus.audio.SpeechSynthesizer
 import com.icon.nexus.audio.speechErrorMessage
 import com.icon.nexus.audio.splitCompletedSentences
+import com.icon.nexus.camera.CameraTour
+import com.icon.nexus.camera.ShotPlanner
 import com.icon.nexus.data.AppSettings
 import com.icon.nexus.data.ConversationHistory
 import com.icon.nexus.data.ConversationRepository
@@ -83,6 +85,10 @@ import kotlin.math.min
  *
  * Live chat is stored as conversation history. Launch opens the newest
  * thread and sends it as Gemini context. Demo sessions are not saved.
+ *
+ * The cinematic control runs a camera over the live core. Speaking,
+ * listening, and the voice level keep moving the nucleus during that path.
+ * Cancel eases back to the wide framing, then the chrome returns.
  */
 class MainViewModel(
     private val machine: AppStateMachine,
@@ -115,6 +121,16 @@ class MainViewModel(
 
     private val chromeVisibleInternal = MutableStateFlow(true)
     val chromeVisible: StateFlow<Boolean> = chromeVisibleInternal.asStateFlow()
+
+    private val cinematicTourInternal = MutableStateFlow<CameraTour?>(null)
+    val cinematicTour: StateFlow<CameraTour?> = cinematicTourInternal.asStateFlow()
+
+    private val cinematicReturningInternal = MutableStateFlow(false)
+    val cinematicReturning: StateFlow<Boolean> = cinematicReturningInternal.asStateFlow()
+
+    private val shotPlanner = ShotPlanner()
+    private val cinematicSeed = AtomicLong(0)
+    private var cinematicJob: Job? = null
 
     private val demoModeInternal = MutableStateFlow(initialSettings.demoMode)
     val demoMode: StateFlow<Boolean> = demoModeInternal.asStateFlow()
@@ -245,6 +261,7 @@ class MainViewModel(
      * Call this when the app goes to the background.
      */
     fun onAppBackgrounded(): Result<AppState> {
+        endCinematic()
         stopDemoWork()
         cancelChat()
         cancelAlertTimer()
@@ -259,6 +276,7 @@ class MainViewModel(
     }
 
     override fun onCleared() {
+        cinematicJob?.cancel()
         abandonSpeech()
         synthesizer.release()
         liveSpeech.stopListening()
@@ -417,11 +435,56 @@ class MainViewModel(
     }
 
     fun toggleCinematic() {
-        chromeVisibleInternal.value = !chromeVisibleInternal.value
+        if (cinematicTourInternal.value != null || cinematicReturningInternal.value) {
+            cancelCinematic()
+        } else {
+            startCinematic()
+        }
     }
 
     fun showChrome() {
+        if (cinematicTourInternal.value != null || cinematicReturningInternal.value) {
+            cancelCinematic()
+            return
+        }
         chromeVisibleInternal.value = true
+    }
+
+    private fun startCinematic() {
+        cinematicJob?.cancel()
+        cinematicReturningInternal.value = false
+        cinematicTourInternal.value = shotPlanner.tour(cinematicSeed.incrementAndGet())
+        chromeVisibleInternal.value = false
+        cinematicJob = viewModelScope.launch {
+            delay(ShotPlanner.TOUR_MILLIS)
+            finishCinematic()
+        }
+    }
+
+    private fun cancelCinematic() {
+        if (cinematicReturningInternal.value) return
+        if (cinematicTourInternal.value == null) {
+            chromeVisibleInternal.value = true
+            return
+        }
+        cinematicJob?.cancel()
+        cinematicReturningInternal.value = true
+        cinematicJob = viewModelScope.launch {
+            delay(ShotPlanner.CANCEL_MILLIS)
+            finishCinematic()
+        }
+    }
+
+    private fun finishCinematic() {
+        cinematicJob = null
+        cinematicTourInternal.value = null
+        cinematicReturningInternal.value = false
+        chromeVisibleInternal.value = true
+    }
+
+    private fun endCinematic() {
+        cinematicJob?.cancel()
+        finishCinematic()
     }
 
     suspend fun setDemoMode(enabled: Boolean) {

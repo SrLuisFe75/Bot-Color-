@@ -56,6 +56,8 @@ fun MainScreen(
 ) {
     val state by viewModel.appState.collectAsStateWithLifecycle()
     val chromeVisible by viewModel.chromeVisible.collectAsStateWithLifecycle()
+    val cinematicTour by viewModel.cinematicTour.collectAsStateWithLifecycle()
+    val cinematicReturning by viewModel.cinematicReturning.collectAsStateWithLifecycle()
     val transcriptVisible by viewModel.transcriptVisible.collectAsStateWithLifecycle()
     val userLine by viewModel.userLine.collectAsStateWithLifecycle()
     val iconLine by viewModel.iconLine.collectAsStateWithLifecycle()
@@ -90,6 +92,8 @@ fun MainScreen(
         IconCoreScene(
             state = state,
             audioLevel = audioLevel,
+            tour = cinematicTour,
+            returning = cinematicReturning,
             modifier = Modifier
                 .fillMaxSize()
                 .then(
@@ -197,6 +201,14 @@ fun MainScreen(
                         },
                     )
                     .semantics { contentDescription = "Show controls" },
+            )
+            QuietControl(
+                label = "Cinematic",
+                onClick = viewModel::toggleCinematic,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 28.dp),
             )
         }
     }
@@ -376,12 +388,13 @@ private fun MicControl(
 private fun QuietControl(
     label: String,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Text(
         text = label,
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.48f),
-        modifier = Modifier
+        modifier = modifier
             .clickable(onClick = onClick)
             .semantics { contentDescription = label }
             .padding(vertical = 6.dp),

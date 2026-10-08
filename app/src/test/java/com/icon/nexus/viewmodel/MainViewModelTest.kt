@@ -1,6 +1,7 @@
 package com.icon.nexus.viewmodel
 
 import com.icon.nexus.ai.AIManager
+import com.icon.nexus.camera.ShotPlanner
 import com.icon.nexus.ai.DemoProvider
 import com.icon.nexus.ai.GeminiProvider
 import com.icon.nexus.audio.QueuedSpeechSynthesizer
@@ -28,6 +29,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -180,13 +182,52 @@ class MainViewModelTest {
     }
 
     @Test
-    fun cinematicHidesChromeUntilTheFieldShowsItAgain() {
-        val viewModel = viewModel()
+    fun cinematicHidesChromeUntilTheFieldShowsItAgain() = runTest {
+        val viewModel = timedViewModel()
         viewModel.toggleTranscript()
         viewModel.toggleCinematic()
+        runCurrent()
         assertFalse(viewModel.chromeVisible.value)
         assertTrue(viewModel.transcriptVisible.value)
+        assertNotNull(viewModel.cinematicTour.value)
+
         viewModel.showChrome()
+        runCurrent()
+        assertTrue(viewModel.cinematicReturning.value)
+        assertFalse(viewModel.chromeVisible.value)
+        elapse(ShotPlanner.CANCEL_MILLIS - 1)
+        assertFalse(viewModel.chromeVisible.value)
+        assertNotNull(viewModel.cinematicTour.value)
+        elapse(1)
+        assertTrue(viewModel.chromeVisible.value)
+        assertNull(viewModel.cinematicTour.value)
+        assertFalse(viewModel.cinematicReturning.value)
+    }
+
+    @Test
+    fun cinematicSecondPressEasesBackAndBackgroundSettles() = runTest {
+        val viewModel = timedViewModel()
+        viewModel.toggleCinematic()
+        runCurrent()
+        val first = viewModel.cinematicTour.value
+        viewModel.toggleCinematic()
+        runCurrent()
+        assertTrue(viewModel.cinematicReturning.value)
+        assertFalse(viewModel.chromeVisible.value)
+        elapse(ShotPlanner.CANCEL_MILLIS)
+        assertTrue(viewModel.chromeVisible.value)
+        assertNull(viewModel.cinematicTour.value)
+
+        viewModel.toggleCinematic()
+        runCurrent()
+        val second = viewModel.cinematicTour.value
+        assertNotNull(first)
+        assertNotNull(second)
+        assertTrue(first!!.seed != second!!.seed)
+        assertEquals(AppState.Idle, viewModel.onAppBackgrounded().getOrThrow())
+        assertTrue(viewModel.chromeVisible.value)
+        assertNull(viewModel.cinematicTour.value)
+        elapse(ShotPlanner.TOUR_MILLIS)
         assertTrue(viewModel.chromeVisible.value)
     }
 

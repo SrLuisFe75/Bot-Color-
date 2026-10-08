@@ -54,7 +54,9 @@ Live chat is stored with Room. A conversation has an id and a start time; each m
 
 User memory is a separate store from chat history. It is off until the user turns on “Remember what I ask you to keep.” on the Memory screen, opened from one settings row. Facts are typed there. Nothing is extracted from the conversation. While remembering is on, those lines are included in the Gemini system instruction. Chat messages stay in the conversation tables.
 
-Cinematic playback is a later phase.
+## Phase 13
+
+The cinematic control plays a live camera over ICON CORE for about 30 seconds. The core keeps simulating. The path is a continuous 2D pan and zoom with a little parallax, and it can differ each run. Status, the mic, the transcript, and the other controls hide while it plays. The cinematic control stays, so a second press cancels, and a tap on the field cancels too. Cancel eases back to the wide view, then the controls return.
 
 ## Build
 

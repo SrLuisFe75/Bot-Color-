@@ -16,6 +16,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.nativeCanvas
+import com.icon.nexus.camera.CameraTour
+import com.icon.nexus.camera.CinematicCamera
+import com.icon.nexus.camera.ShotPlanner
 import com.icon.nexus.domain.AppState
 import com.icon.nexus.domain.VisualThemeId
 import com.icon.nexus.ui.theme.IconPalette
@@ -86,6 +89,7 @@ class IconCoreEngine : VisualizerEngine {
         height: Float,
         appState: AppState,
         nowNanos: Long,
+        camera: CinematicCamera = CinematicCamera(),
     ) {
         if (width < 1f || height < 1f) return
         val dt = advance(nowNanos)
@@ -94,7 +98,16 @@ class IconCoreEngine : VisualizerEngine {
         syncShaders(width, height, alert)
         val cx = width * 0.5f
         val cy = height * 0.5f
-        canvas.drawRect(0f, 0f, width, height, fieldPaint)
+        val shiftX = camera.panX * minExtent
+        val shiftY = camera.panY * minExtent
+        canvas.save()
+        canvas.translate(shiftX * FIELD_PARALLAX, shiftY * FIELD_PARALLAX)
+        canvas.drawRect(-width, -height, width * 2f, height * 2f, fieldPaint)
+        canvas.restore()
+        canvas.save()
+        canvas.translate(cx + shiftX, cy + shiftY)
+        canvas.scale(camera.zoom, camera.zoom)
+        canvas.translate(-cx, -cy)
         drawMotes(canvas, cx, cy, appState, dt)
         drawRings(canvas, cx, cy)
         val speaking = appState is AppState.Speaking
@@ -110,6 +123,7 @@ class IconCoreEngine : VisualizerEngine {
             alertRingPaint.alpha = (150 + 55f * breath).toInt().coerceIn(0, 255)
             canvas.drawCircle(cx, cy, minExtent * 0.78f, alertRingPaint)
         }
+        canvas.restore()
     }
 
     private fun advance(nowNanos: Long): Float {
@@ -281,8 +295,12 @@ fun IconCoreScene(
     audioLevel: Float,
     modifier: Modifier = Modifier,
     themeId: VisualThemeId = VisualThemeId.Core,
+    tour: CameraTour? = null,
+    returning: Boolean = false,
 ) {
     val engine = remember { IconCoreEngine() }
+    val planner = remember { ShotPlanner() }
+    val clock = remember { CameraClock() }
     val theme = VisualizerThemes.forId(themeId)
     remember(themeId) { engine.applyTheme(theme) }
     var frame by remember { mutableLongStateOf(0L) }
@@ -299,7 +317,64 @@ fun IconCoreScene(
             height = size.height,
             appState = state,
             nowNanos = frame,
+            camera = clock.sample(planner, tour, returning, frame),
         )
+    }
+}
+
+/**
+ * Samples the live tour from frame time. Cancel eases from the camera that
+ * is on screen, so the picture does not jump.
+ */
+private class CameraClock {
+    private var activeTour: CameraTour? = null
+    private var tourStartNanos = 0L
+    private var easing = false
+    private var cancelFrom = CinematicCamera()
+    private var cancelStartNanos = 0L
+
+    fun sample(
+        planner: ShotPlanner,
+        tour: CameraTour?,
+        returning: Boolean,
+        frameNanos: Long,
+    ): CinematicCamera {
+        if (tour == null && !returning) {
+            activeTour = null
+            easing = false
+            tourStartNanos = 0L
+            return CinematicCamera()
+        }
+        if (tour != null && tour !== activeTour) {
+            activeTour = tour
+            tourStartNanos = 0L
+            easing = false
+        }
+        if (tour != null && tourStartNanos == 0L && frameNanos > 0L) {
+            tourStartNanos = frameNanos
+        }
+        val elapsed = elapsedMillis(tourStartNanos, frameNanos)
+        if (returning && !easing) {
+            easing = true
+            cancelFrom = if (tour != null) {
+                planner.position(tour, elapsed)
+            } else {
+                CinematicCamera()
+            }
+            cancelStartNanos = 0L
+        }
+        if (!returning) easing = false
+        if (easing) {
+            if (cancelStartNanos == 0L && frameNanos > 0L) cancelStartNanos = frameNanos
+            return planner.cancel(cancelFrom, elapsedMillis(cancelStartNanos, frameNanos))
+        }
+        val current = tour ?: return CinematicCamera()
+        return planner.position(current, elapsed)
+    }
+
+    private fun elapsedMillis(startNanos: Long, frameNanos: Long): Long {
+        if (startNanos == 0L || frameNanos == 0L || frameNanos < startNanos) return 0L
+        return (frameNanos - startNanos) / 1_000_000L
     }
 }
 
@@ -352,6 +427,7 @@ private fun strokePaint(): Paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
     isDither = true
 }
 
+private const val FIELD_PARALLAX = 0.28f
 private const val VOICE_FLOOR = 0.05f
 private const val IDLE_BREATH_SECONDS = 5.2f
 private const val IDLE_ORBIT = 0.22f
