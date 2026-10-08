@@ -14,14 +14,16 @@ import com.icon.nexus.ai.GeminiProvider
 import com.icon.nexus.audio.AndroidMicrophonePermission
 import com.icon.nexus.audio.AudioAnalyzer
 import com.icon.nexus.audio.MicrophonePermission
-import com.icon.nexus.audio.QueuedSpeechSynthesizer
+import com.icon.nexus.audio.AndroidSpeechSynthesizer
 import com.icon.nexus.audio.RecognizerSpeechInput
 import com.icon.nexus.audio.SpeechEvent
 import com.icon.nexus.audio.SpeechInput
 import com.icon.nexus.audio.SpeechInputGate
 import com.icon.nexus.audio.SpeechMessages
+import com.icon.nexus.audio.SpeechPlaybackListener
 import com.icon.nexus.audio.SpeechSynthesizer
 import com.icon.nexus.audio.speechErrorMessage
+import com.icon.nexus.audio.splitCompletedSentences
 import com.icon.nexus.data.AppSettings
 import com.icon.nexus.data.ConversationRepository
 import com.icon.nexus.data.EncryptedSettingsRepository
@@ -52,8 +54,9 @@ import kotlin.math.min
  * Demo mode runs a timed local session on a mic tap. The job is tied to the
  * current turn id: a newer turn cancels stale level and transcript writes.
  * With demo mode off, [sendText] and a one-shot microphone utterance stream
- * a Gemini reply into the transcript and return to Idle. Speaking stays on
- * the demo timeline. The microphone opens only for that one utterance.
+ * a Gemini reply into the transcript. Finished sentences are spoken with
+ * Android text-to-speech, then the app returns to Idle. Demo mode keeps the
+ * timed local timeline and does not speak those sentences.
  *
  * [onAppBackgrounded] is the background hook. The activity calls it from
  * `onStop` so leaving the foreground returns the app to Idle and cancels
@@ -111,8 +114,24 @@ class MainViewModel(
     private val microphoneExplanationInternal = MutableStateFlow(false)
     val microphoneExplanation: StateFlow<Boolean> = microphoneExplanationInternal.asStateFlow()
 
+    private var speechTurnId: Long? = null
+    private var pendingUtterances = 0
+    private var replyFinished = false
+    private var speechUnavailable = false
+    private val sentenceBuffer = StringBuilder()
+
     init {
         liveSpeech.setListener { event -> onSpeechEvent(event) }
+        synthesizer.setPlaybackListener(object : SpeechPlaybackListener {
+            override fun onUtteranceFinished(turnId: Long) {
+                onSpeechFinished(turnId)
+            }
+
+            override fun onSpeechUnavailable() {
+                val turnId = speechTurnId ?: return
+                markSpeechUnavailable(turnId)
+            }
+        })
     }
 
     private val settingsMutex = Mutex()
@@ -180,6 +199,7 @@ class MainViewModel(
     fun onAppBackgrounded(): Result<AppState> {
         stopDemoWork()
         cancelChat()
+        abandonSpeech()
         microphoneExplanationInternal.value = false
         liveSpeech.stopListening()
         if (appStateInternal.value is AppState.Idle) {
@@ -187,6 +207,13 @@ class MainViewModel(
             return Result.success(AppState.Idle)
         }
         return dispatch(StateTransition.ToIdle)
+    }
+
+    override fun onCleared() {
+        abandonSpeech()
+        synthesizer.release()
+        liveSpeech.stopListening()
+        super.onCleared()
     }
 
     fun acceptMicrophoneExplanation() {
@@ -406,6 +433,7 @@ class MainViewModel(
     }
 
     private fun interruptToListening() {
+        abandonSpeech()
         cancelChat()
         val state = appStateInternal.value
         if (state !is AppState.Thinking && state !is AppState.Speaking) return
@@ -461,6 +489,84 @@ class MainViewModel(
         }
     }
 
+    private fun beginReplySpeech(turnId: Long) {
+        speechTurnId = turnId
+        pendingUtterances = 0
+        replyFinished = false
+        speechUnavailable = false
+        sentenceBuffer.clear()
+    }
+
+    private fun absorbSpeech(turnId: Long, chunk: String) {
+        if (demoModeInternal.value || speechUnavailable || turnId != speechTurnId) return
+        sentenceBuffer.append(chunk)
+        val split = splitCompletedSentences(sentenceBuffer.toString())
+        sentenceBuffer.clear()
+        sentenceBuffer.append(split.remainder)
+        queueSentences(turnId, split.sentences)
+    }
+
+    private fun flushSpeech(turnId: Long) {
+        if (demoModeInternal.value || speechUnavailable || turnId != speechTurnId) return
+        val tail = sentenceBuffer.toString().trim()
+        sentenceBuffer.clear()
+        if (tail.any { it.isLetterOrDigit() }) {
+            queueSentences(turnId, listOf(tail))
+        }
+    }
+
+    private fun queueSentences(turnId: Long, sentences: List<String>) {
+        if (sentences.isEmpty() || turnId != speechTurnId || speechUnavailable) return
+        if (!synthesizer.available) {
+            markSpeechUnavailable(turnId)
+            return
+        }
+        pendingUtterances += sentences.size
+        if (appStateInternal.value is AppState.Thinking && ownsTurn(turnId)) {
+            dispatch(StateTransition.ToSpeaking)
+        }
+        synthesizer.enqueue(turnId, sentences)
+    }
+
+    private fun markSpeechUnavailable(turnId: Long) {
+        speechUnavailable = true
+        pendingUtterances = 0
+        sentenceBuffer.clear()
+        synthesizer.stop()
+        chatErrorInternal.value = SpeechMessages.UNAVAILABLE
+        if (turnId == speechTurnId && appStateInternal.value is AppState.Speaking && ownsTurn(turnId)) {
+            speechTurnId = null
+            dispatch(StateTransition.ToIdle)
+        }
+    }
+
+    private fun onSpeechFinished(turnId: Long) {
+        if (demoModeInternal.value || turnId != speechTurnId) return
+        val activeTurn = when (val state = appStateInternal.value) {
+            is AppState.Thinking -> state.turnId
+            is AppState.Speaking -> state.turnId
+            else -> return
+        }
+        if (activeTurn != turnId) return
+        if (pendingUtterances > 0) pendingUtterances -= 1
+        maybeFinishSpeech(turnId)
+    }
+
+    private fun maybeFinishSpeech(turnId: Long) {
+        if (turnId != speechTurnId || !replyFinished || pendingUtterances > 0) return
+        if (appStateInternal.value is AppState.Speaking && ownsTurn(turnId)) {
+            dispatch(StateTransition.ToIdle)
+        }
+    }
+
+    private fun abandonSpeech() {
+        speechTurnId = null
+        pendingUtterances = 0
+        replyFinished = false
+        sentenceBuffer.clear()
+        synthesizer.stop()
+    }
+
     private fun beginChatTurn(): Int {
         val generation = chatGeneration.incrementAndGet()
         chatJob?.cancel()
@@ -482,6 +588,7 @@ class MainViewModel(
         val thinking = dispatch(StateTransition.ToThinking).getOrNull() as? AppState.Thinking ?: return
         if (chatGeneration.get() != generation) return
         val turnId = thinking.turnId
+        beginReplySpeech(turnId)
         userLineInternal.value = text
         iconLineInternal.value = ""
         chatErrorInternal.value = null
@@ -526,18 +633,32 @@ class MainViewModel(
             ).collect { event ->
                 if (chatGeneration.get() != generation || !ownsTurn(turnId)) return@collect
                 when (event) {
-                    is AIEvent.Token -> iconLineInternal.value += event.text
+                    is AIEvent.Token -> {
+                        iconLineInternal.value += event.text
+                        absorbSpeech(turnId, event.text)
+                    }
                     is AIEvent.Failed -> {
                         chatErrorInternal.value = event.message.ifBlank { GeminiMessages.EMPTY }
+                        replyFinished = true
+                        pendingUtterances = 0
+                        sentenceBuffer.clear()
+                        synthesizer.stop()
+                        if (appStateInternal.value is AppState.Speaking && ownsTurn(turnId)) {
+                            speechTurnId = null
+                            dispatch(StateTransition.ToIdle)
+                        }
                     }
                     is AIEvent.Completed -> {
                         val reply = iconLineInternal.value.trim()
                         if (reply.isEmpty()) {
                             chatErrorInternal.value = GeminiMessages.EMPTY
                         } else {
-                            chatErrorInternal.value = null
+                            if (!speechUnavailable) chatErrorInternal.value = null
                             saveAssistant(generation, turnId, reply)
+                            flushSpeech(turnId)
                         }
+                        replyFinished = true
+                        maybeFinishSpeech(turnId)
                     }
                 }
             }
@@ -620,7 +741,7 @@ class MainViewModel(
                     val model = MainViewModel(
                         machine = AppStateMachine { turns.incrementAndGet() },
                         speechInput = SpeechInputGate(),
-                        synthesizer = QueuedSpeechSynthesizer(),
+                        synthesizer = AndroidSpeechSynthesizer(context.applicationContext),
                         aiManager = manager,
                         settings = settings,
                         initialSettings = initial,

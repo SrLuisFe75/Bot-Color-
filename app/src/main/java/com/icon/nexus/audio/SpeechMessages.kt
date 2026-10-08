@@ -7,6 +7,7 @@ object SpeechMessages {
     const val BUSY = "The microphone is busy."
     const val NETWORK = "Speech recognition needs a network connection."
     const val FAILED = "Speech recognition failed."
+    const val UNAVAILABLE = "Speech is unavailable."
 }
 
 /**

@@ -30,7 +30,11 @@ Text chat with Gemini when demo mode is off. A single-line field and Send stream
 
 One-shot speech recognition when demo mode is off. The mic asks for the microphone, listens to a single utterance, and sends the final text through the same Gemini path as the text field. The timed demo is unchanged while demo mode is on.
 
-Android text-to-speech and cinematic playback are later phases.
+## Phase 7
+
+Android text-to-speech when demo mode is off. Gemini sentences are queued as they finish, and the first sentence moves the app to Speaking. The timed demo still uses its simulated voice level and does not speak the script.
+
+Cinematic playback is a later phase.
 
 ## Build
 
