@@ -11,11 +11,17 @@ import com.icon.nexus.ai.AIRequest
 import com.icon.nexus.ai.DemoProvider
 import com.icon.nexus.ai.GeminiMessages
 import com.icon.nexus.ai.GeminiProvider
+import com.icon.nexus.audio.AndroidMicrophonePermission
 import com.icon.nexus.audio.AudioAnalyzer
+import com.icon.nexus.audio.MicrophonePermission
 import com.icon.nexus.audio.QueuedSpeechSynthesizer
+import com.icon.nexus.audio.RecognizerSpeechInput
+import com.icon.nexus.audio.SpeechEvent
 import com.icon.nexus.audio.SpeechInput
 import com.icon.nexus.audio.SpeechInputGate
+import com.icon.nexus.audio.SpeechMessages
 import com.icon.nexus.audio.SpeechSynthesizer
+import com.icon.nexus.audio.speechErrorMessage
 import com.icon.nexus.data.AppSettings
 import com.icon.nexus.data.ConversationRepository
 import com.icon.nexus.data.EncryptedSettingsRepository
@@ -45,8 +51,9 @@ import kotlin.math.min
 /**
  * Demo mode runs a timed local session on a mic tap. The job is tied to the
  * current turn id: a newer turn cancels stale level and transcript writes.
- * With demo mode off, [sendText] streams a Gemini reply into the transcript
- * and returns to Idle. Speaking stays on the demo timeline.
+ * With demo mode off, [sendText] and a one-shot microphone utterance stream
+ * a Gemini reply into the transcript and return to Idle. Speaking stays on
+ * the demo timeline. The microphone opens only for that one utterance.
  *
  * [onAppBackgrounded] is the background hook. The activity calls it from
  * `onStop` so leaving the foreground returns the app to Idle and cancels
@@ -62,6 +69,8 @@ class MainViewModel(
     private val analyzer: AudioAnalyzer = AudioAnalyzer(),
     private val gemini: AIProvider = GeminiProvider(settings),
     private val conversations: ConversationRepository = InMemoryConversationRepository(),
+    private val liveSpeech: SpeechInput = speechInput,
+    private val microphone: MicrophonePermission = MicrophonePermission { true },
 ) : ViewModel() {
     private val appStateInternal = MutableStateFlow(machine.current)
     val appState: StateFlow<AppState> = appStateInternal.asStateFlow()
@@ -99,6 +108,13 @@ class MainViewModel(
     private val chatErrorInternal = MutableStateFlow<String?>(null)
     val chatError: StateFlow<String?> = chatErrorInternal.asStateFlow()
 
+    private val microphoneExplanationInternal = MutableStateFlow(false)
+    val microphoneExplanation: StateFlow<Boolean> = microphoneExplanationInternal.asStateFlow()
+
+    init {
+        liveSpeech.setListener { event -> onSpeechEvent(event) }
+    }
+
     private val settingsMutex = Mutex()
     private val conversationMutex = Mutex()
     private val chatGeneration = AtomicInteger(0)
@@ -109,7 +125,14 @@ class MainViewModel(
     private var chatJob: Job? = null
 
     fun onMicClicked() {
-        if (!demoModeInternal.value) return
+        if (!demoModeInternal.value) {
+            when (appStateInternal.value) {
+                AppState.Idle -> requestLiveListening()
+                is AppState.Listening -> dispatch(StateTransition.ToIdle)
+                else -> Unit
+            }
+            return
+        }
         when (val state = appStateInternal.value) {
             AppState.Idle -> startDemoSession()
             is AppState.Listening -> {
@@ -125,14 +148,14 @@ class MainViewModel(
 
     /**
      * Demo mode: Idle previews Alert, then returns to Idle. Speaking
-     * interrupts into Listening. Text chat: a long press while Thinking
-     * cancels the Gemini call and returns to Idle.
+     * interrupts into Listening. Text chat: a long press while Thinking or
+     * Speaking cancels that turn and only then starts one-shot Listening.
      */
     fun onMicLongPress() {
         if (!demoModeInternal.value) {
-            if (appStateInternal.value is AppState.Thinking) {
-                cancelChat()
-                dispatch(StateTransition.ToIdle)
+            when (appStateInternal.value) {
+                is AppState.Thinking, is AppState.Speaking -> interruptToListening()
+                else -> Unit
             }
             return
         }
@@ -157,10 +180,36 @@ class MainViewModel(
     fun onAppBackgrounded(): Result<AppState> {
         stopDemoWork()
         cancelChat()
+        microphoneExplanationInternal.value = false
+        liveSpeech.stopListening()
         if (appStateInternal.value is AppState.Idle) {
+            speechInput.stopListening()
             return Result.success(AppState.Idle)
         }
         return dispatch(StateTransition.ToIdle)
+    }
+
+    fun acceptMicrophoneExplanation() {
+        microphoneExplanationInternal.value = false
+    }
+
+    fun dismissMicrophoneExplanation() {
+        microphoneExplanationInternal.value = false
+    }
+
+    fun onMicrophonePermissionResult(granted: Boolean) {
+        microphoneExplanationInternal.value = false
+        if (demoModeInternal.value) return
+        if (!granted) {
+            if (appStateInternal.value is AppState.Listening) {
+                dispatch(StateTransition.ToIdle)
+            }
+            chatErrorInternal.value = SpeechMessages.PERMISSION
+            return
+        }
+        if (appStateInternal.value is AppState.Idle) {
+            dispatch(StateTransition.ToListening)
+        }
     }
 
     fun sendText(raw: String) {
@@ -168,7 +217,7 @@ class MainViewModel(
         val text = raw.trim()
         if (text.isEmpty()) return
         val state = appStateInternal.value
-        if (state !is AppState.Idle && state !is AppState.Thinking) return
+        if (state !is AppState.Idle && state !is AppState.Thinking && state !is AppState.Listening) return
         val generation = beginChatTurn()
         chatJob = viewModelScope.launch {
             runChatTurn(generation, text)
@@ -250,10 +299,6 @@ class MainViewModel(
         val result = machine.transition(target)
         result.onSuccess { next ->
             when (next) {
-                is AppState.Listening -> speechInput.startListening(next.turnId)
-                else -> speechInput.stopListening()
-            }
-            when (next) {
                 is AppState.Thinking -> if (demoModeInternal.value) {
                     userLineInternal.value = demoTranscript[scriptIndex].first
                 }
@@ -265,6 +310,7 @@ class MainViewModel(
             }
             appStateInternal.value = next
             rejectionInternal.value = null
+            routeSpeech(next)
         }
         result.onFailure { error ->
             rejectionInternal.value = error.message
@@ -347,6 +393,72 @@ class MainViewModel(
         demoJob = null
         analyzer.reset()
         audioLevelInternal.value = 0f
+    }
+
+    private fun requestLiveListening() {
+        if (microphone.isGranted()) {
+            chatErrorInternal.value = null
+            dispatch(StateTransition.ToListening)
+            return
+        }
+        chatErrorInternal.value = null
+        microphoneExplanationInternal.value = true
+    }
+
+    private fun interruptToListening() {
+        cancelChat()
+        val state = appStateInternal.value
+        if (state !is AppState.Thinking && state !is AppState.Speaking) return
+        if (!microphone.isGranted()) {
+            dispatch(StateTransition.ToIdle)
+            microphoneExplanationInternal.value = true
+            return
+        }
+        chatErrorInternal.value = null
+        dispatch(StateTransition.ToListening)
+    }
+
+    private fun onSpeechEvent(event: SpeechEvent) {
+        if (demoModeInternal.value) return
+        val listening = appStateInternal.value as? AppState.Listening ?: return
+        if (listening.turnId != event.turnId) return
+        when (event) {
+            is SpeechEvent.Result -> {
+                val text = event.text.trim()
+                if (text.isEmpty()) {
+                    chatErrorInternal.value = SpeechMessages.EMPTY
+                    dispatch(StateTransition.ToIdle)
+                } else {
+                    chatErrorInternal.value = null
+                    val generation = beginChatTurn()
+                    chatJob = viewModelScope.launch {
+                        runChatTurn(generation, text)
+                    }
+                }
+            }
+            is SpeechEvent.Failure -> {
+                chatErrorInternal.value = speechErrorMessage(event.reason)
+                dispatch(StateTransition.ToIdle)
+            }
+        }
+    }
+
+    private fun routeSpeech(next: AppState) {
+        if (demoModeInternal.value) {
+            liveSpeech.stopListening()
+            if (next is AppState.Listening) {
+                speechInput.startListening(next.turnId)
+            } else {
+                speechInput.stopListening()
+            }
+            return
+        }
+        speechInput.stopListening()
+        if (next is AppState.Listening) {
+            liveSpeech.startListening(next.turnId)
+        } else {
+            liveSpeech.stopListening()
+        }
     }
 
     private fun beginChatTurn(): Int {
@@ -514,6 +626,8 @@ class MainViewModel(
                         initialSettings = initial,
                         gemini = gemini,
                         conversations = InMemoryConversationRepository(),
+                        liveSpeech = RecognizerSpeechInput(context.applicationContext),
+                        microphone = AndroidMicrophonePermission(context.applicationContext),
                     )
                     @Suppress("UNCHECKED_CAST")
                     return model as T

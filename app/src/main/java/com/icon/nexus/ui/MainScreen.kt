@@ -1,5 +1,6 @@
 package com.icon.nexus.ui
 
+import android.Manifest
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -18,6 +19,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -37,6 +41,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.icon.nexus.audio.SpeechMessages
 import com.icon.nexus.domain.AppState
 import com.icon.nexus.ui.presence.IconPresence
 import com.icon.nexus.viewmodel.MainViewModel
@@ -57,6 +62,12 @@ fun MainScreen(viewModel: MainViewModel) {
     val chatError by viewModel.chatError.collectAsStateWithLifecycle()
     val apiKey by viewModel.apiKey.collectAsStateWithLifecycle()
     val geminiModel by viewModel.geminiModel.collectAsStateWithLifecycle()
+    val microphoneExplanation by viewModel.microphoneExplanation.collectAsStateWithLifecycle()
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        viewModel.onMicrophonePermissionResult(granted)
+    }
     val scope = rememberCoroutineScope()
     var settingsOpen by remember { mutableStateOf(false) }
     val statusColor = if (state is AppState.Alert) {
@@ -177,6 +188,29 @@ fun MainScreen(viewModel: MainViewModel) {
                 scope.launch { viewModel.setGeminiModel(value) }
             },
             onDismiss = { settingsOpen = false },
+        )
+    }
+
+    if (microphoneExplanation) {
+        AlertDialog(
+            onDismissRequest = viewModel::dismissMicrophoneExplanation,
+            title = { Text("Microphone") },
+            text = { Text(SpeechMessages.EXPLANATION) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.acceptMicrophoneExplanation()
+                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    },
+                ) {
+                    Text("Continue")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismissMicrophoneExplanation) {
+                    Text("Not now")
+                }
+            },
         )
     }
 }

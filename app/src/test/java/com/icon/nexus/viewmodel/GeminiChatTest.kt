@@ -46,6 +46,10 @@ class GeminiChatTest {
     fun micTapDoesNotStartDemoWhenDemoModeIsOff() {
         val viewModel = chatViewModel(apiKey = "")
         viewModel.onMicClicked()
+        assertTrue(viewModel.appState.value is AppState.Listening)
+        assertEquals("", viewModel.userLine.value)
+        assertEquals("", viewModel.iconLine.value)
+        viewModel.onMicClicked()
         assertEquals(AppState.Idle, viewModel.appState.value)
         viewModel.onMicLongPress()
         assertEquals(AppState.Idle, viewModel.appState.value)
@@ -186,13 +190,13 @@ class GeminiChatTest {
             assertTrue(started.await(5, TimeUnit.SECONDS))
             val thinking = viewModel.appState.value as AppState.Thinking
             viewModel.onMicLongPress()
-            assertEquals(AppState.Idle, viewModel.appState.value)
-            assertFalse(viewModel.appState.value is AppState.Listening)
+            val listening = viewModel.appState.value as AppState.Listening
+            assertTrue(listening.turnId != thinking.turnId)
             release.countDown()
             kotlinx.coroutines.delay(200)
-            assertEquals(AppState.Idle, viewModel.appState.value)
+            assertEquals(listening, viewModel.appState.value)
             assertFalse(viewModel.iconLine.value.contains("late"))
-            assertTrue(thinking.turnId > 0L)
+            assertEquals("hello", viewModel.userLine.value)
         } finally {
             release.countDown()
             server.shutdown()

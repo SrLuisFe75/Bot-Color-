@@ -26,7 +26,11 @@ Timed local demo. A mic tap listens, thinks, speaks a fixed sentence with a smoo
 
 Text chat with Gemini when demo mode is off. A single-line field and Send stream a reply into the ICON line, then return to Idle. The API key stays in encrypted settings. The timed demo is unchanged while demo mode is on.
 
-Speech recognition, Android text-to-speech, and cinematic playback are later phases.
+## Phase 6
+
+One-shot speech recognition when demo mode is off. The mic asks for the microphone, listens to a single utterance, and sends the final text through the same Gemini path as the text field. The timed demo is unchanged while demo mode is on.
+
+Android text-to-speech and cinematic playback are later phases.
 
 ## Build
 
