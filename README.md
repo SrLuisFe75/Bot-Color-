@@ -58,6 +58,10 @@ User memory is a separate store from chat history. It is off until the user turn
 
 The cinematic control plays a live camera over ICON CORE for about 30 seconds. The core keeps simulating. The path is a continuous 2D pan and zoom with a little parallax, and it can differ each run. Status, the mic, the transcript, and the other controls hide while it plays. The cinematic control stays, so a second press cancels, and a tap on the field cancels too. Cancel eases back to the wide view, then the controls return.
 
+## Phase 14
+
+Settings is one screen in the ICON theme, opened from the settings control. The presence stays home. ICON stores the assistant name and personality, and empty values fall back to the defaults in the system instruction. Voice stores speech rate, volume, and a language tag for Android text-to-speech and the recognizer. AI stores Demo or Gemini, the model, and a masked API key in the existing encrypted settings. Demo still runs the local timeline and does not call Gemini. Visual keeps ICON CORE as the only scene, scales the voice level by visual sensitivity, and Show conversation still controls the transcript. Memory opens the existing memory screen. About shows the name and the app version. Privacy on that screen says what stays on the device and what a Gemini turn sends.
+
 ## Build
 
 ```bash

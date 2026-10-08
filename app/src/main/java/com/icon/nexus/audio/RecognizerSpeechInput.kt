@@ -8,7 +8,6 @@ import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import java.util.Locale
 
 /**
  * One-shot [SpeechRecognizer]. The recognizer is created and destroyed on
@@ -23,12 +22,18 @@ class RecognizerSpeechInput(
     private var recognizer: SpeechRecognizer? = null
     private var activeTurn: Long? = null
     private var listener: SpeechEventListener? = null
+    private var languageTag = ""
 
     override val isActive: Boolean
         get() = activeTurn != null
 
     override fun setListener(listener: SpeechEventListener?) {
         this.listener = listener
+    }
+
+    override fun setLanguageTag(tag: String) {
+        val trimmed = tag.trim()
+        onMain { languageTag = trimmed }
     }
 
     override fun startListening(turnId: Long) {
@@ -118,7 +123,7 @@ class RecognizerSpeechInput(
                 RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                 RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
             )
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, resolvedLanguageTag(languageTag))
             putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)

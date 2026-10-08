@@ -30,7 +30,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,13 +45,12 @@ import com.icon.nexus.domain.AppState
 import com.icon.nexus.visualizer.IconCoreScene
 import com.icon.nexus.viewmodel.MainViewModel
 import com.icon.nexus.viewmodel.statusLabel
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MainScreen(
     viewModel: MainViewModel,
-    onOpenMemory: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
 ) {
     val state by viewModel.appState.collectAsStateWithLifecycle()
     val chromeVisible by viewModel.chromeVisible.collectAsStateWithLifecycle()
@@ -62,10 +60,8 @@ fun MainScreen(
     val userLine by viewModel.userLine.collectAsStateWithLifecycle()
     val iconLine by viewModel.iconLine.collectAsStateWithLifecycle()
     val audioLevel by viewModel.audioLevel.collectAsStateWithLifecycle()
+    val visualSensitivity by viewModel.visualSensitivity.collectAsStateWithLifecycle()
     val demoMode by viewModel.demoMode.collectAsStateWithLifecycle()
-    val transcriptStartsVisible by viewModel.transcriptStartsVisible.collectAsStateWithLifecycle()
-    val apiKey by viewModel.apiKey.collectAsStateWithLifecycle()
-    val geminiModel by viewModel.geminiModel.collectAsStateWithLifecycle()
     val microphoneExplanation by viewModel.microphoneExplanation.collectAsStateWithLifecycle()
     val history by viewModel.history.collectAsStateWithLifecycle()
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -73,9 +69,7 @@ fun MainScreen(
     ) { granted ->
         viewModel.onMicrophonePermissionResult(granted)
     }
-    val scope = rememberCoroutineScope()
     val presenceInteraction = remember { MutableInteractionSource() }
-    var settingsOpen by remember { mutableStateOf(false) }
     var historyOpen by remember { mutableStateOf(false) }
     val alertMessage = (state as? AppState.Alert)?.message
     val statusColor = if (state is AppState.Alert) {
@@ -94,6 +88,7 @@ fun MainScreen(
             audioLevel = audioLevel,
             tour = cinematicTour,
             returning = cinematicReturning,
+            sensitivity = visualSensitivity,
             modifier = Modifier
                 .fillMaxSize()
                 .then(
@@ -182,7 +177,7 @@ fun MainScreen(
                     )
                     QuietControl(
                         label = "Settings",
-                        onClick = { settingsOpen = true },
+                        onClick = onOpenSettings,
                     )
                 }
             }
@@ -211,32 +206,6 @@ fun MainScreen(
                     .padding(bottom = 28.dp),
             )
         }
-    }
-
-    if (settingsOpen) {
-        SettingsSheet(
-            demoMode = demoMode,
-            transcriptStartsVisible = transcriptStartsVisible,
-            apiKey = apiKey,
-            geminiModel = geminiModel,
-            onDemoMode = { enabled ->
-                scope.launch { viewModel.setDemoMode(enabled) }
-            },
-            onTranscriptStartsVisible = { visible ->
-                scope.launch { viewModel.setTranscriptStartsVisible(visible) }
-            },
-            onApiKey = { value ->
-                scope.launch { viewModel.setApiKey(value) }
-            },
-            onGeminiModel = { value ->
-                scope.launch { viewModel.setGeminiModel(value) }
-            },
-            onOpenMemory = {
-                settingsOpen = false
-                onOpenMemory()
-            },
-            onDismiss = { settingsOpen = false },
-        )
     }
 
     if (historyOpen) {

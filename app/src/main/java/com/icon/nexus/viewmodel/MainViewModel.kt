@@ -45,11 +45,12 @@ import com.icon.nexus.memory.rememberedFacts
 import com.icon.nexus.data.SettingsRepository
 import com.icon.nexus.domain.AppState
 import com.icon.nexus.domain.AppStateMachine
-import com.icon.nexus.domain.AssistantPersona
 import com.icon.nexus.domain.Author
+import com.icon.nexus.domain.resolvedPersona
 import com.icon.nexus.domain.Conversation
 import com.icon.nexus.domain.Message
 import com.icon.nexus.domain.StateTransition
+import com.icon.nexus.settings.ModelProviderId
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -150,6 +151,27 @@ class MainViewModel(
     private val geminiModelInternal = MutableStateFlow(initialSettings.geminiModel)
     val geminiModel: StateFlow<String> = geminiModelInternal.asStateFlow()
 
+    private val providerInternal = MutableStateFlow(initialSettings.provider)
+    val provider: StateFlow<ModelProviderId> = providerInternal.asStateFlow()
+
+    private val personaNameInternal = MutableStateFlow(initialSettings.personaName)
+    val personaName: StateFlow<String> = personaNameInternal.asStateFlow()
+
+    private val personalityInternal = MutableStateFlow(initialSettings.personality)
+    val personality: StateFlow<String> = personalityInternal.asStateFlow()
+
+    private val voiceRateInternal = MutableStateFlow(initialSettings.voiceRate)
+    val voiceRate: StateFlow<Float> = voiceRateInternal.asStateFlow()
+
+    private val voiceVolumeInternal = MutableStateFlow(initialSettings.voiceVolume)
+    val voiceVolume: StateFlow<Float> = voiceVolumeInternal.asStateFlow()
+
+    private val languageTagInternal = MutableStateFlow(initialSettings.languageTag)
+    val languageTag: StateFlow<String> = languageTagInternal.asStateFlow()
+
+    private val visualSensitivityInternal = MutableStateFlow(initialSettings.visualSensitivity)
+    val visualSensitivity: StateFlow<Float> = visualSensitivityInternal.asStateFlow()
+
     private val microphoneExplanationInternal = MutableStateFlow(false)
     val microphoneExplanation: StateFlow<Boolean> = microphoneExplanationInternal.asStateFlow()
 
@@ -175,6 +197,7 @@ class MainViewModel(
     private val conversationMutex = Mutex()
 
     init {
+        applyVoice(initialSettings)
         playback.setLevelListener { level -> acceptPlaybackEnergy(level) }
         liveSpeech.setListener { event -> onSpeechEvent(event) }
         synthesizer.setPlaybackListener(object : SpeechPlaybackListener {
@@ -514,6 +537,80 @@ class MainViewModel(
         settingsMutex.withLock {
             settings.update { current -> current.copy(geminiModel = value) }
         }
+    }
+
+    suspend fun setProvider(provider: ModelProviderId) {
+        val demo = provider == ModelProviderId.DEMO
+        if (demo && !demoModeInternal.value) {
+            cancelChat()
+            abandonSpeech()
+            liveSpeech.stopListening()
+            if (appStateInternal.value !is AppState.Idle) {
+                dispatch(StateTransition.ToIdle)
+            }
+        }
+        providerInternal.value = provider
+        demoModeInternal.value = demo
+        settingsMutex.withLock {
+            settings.update { current -> current.copy(provider = provider, demoMode = demo) }
+        }
+    }
+
+    suspend fun setPersonaName(value: String) {
+        personaNameInternal.value = value
+        settingsMutex.withLock {
+            settings.update { current -> current.copy(personaName = value) }
+        }
+    }
+
+    suspend fun setPersonality(value: String) {
+        personalityInternal.value = value
+        settingsMutex.withLock {
+            settings.update { current -> current.copy(personality = value) }
+        }
+    }
+
+    suspend fun setVoiceRate(value: Float) {
+        val rate = value.coerceIn(MIN_VOICE_RATE, MAX_VOICE_RATE)
+        voiceRateInternal.value = rate
+        val next = settingsMutex.withLock {
+            settings.update { current -> current.copy(voiceRate = rate) }
+            settings.get()
+        }
+        applyVoice(next)
+    }
+
+    suspend fun setVoiceVolume(value: Float) {
+        val volume = value.coerceIn(0f, 1f)
+        voiceVolumeInternal.value = volume
+        val next = settingsMutex.withLock {
+            settings.update { current -> current.copy(voiceVolume = volume) }
+            settings.get()
+        }
+        applyVoice(next)
+    }
+
+    suspend fun setLanguageTag(value: String) {
+        languageTagInternal.value = value
+        val next = settingsMutex.withLock {
+            settings.update { current -> current.copy(languageTag = value) }
+            settings.get()
+        }
+        applyVoice(next)
+    }
+
+    suspend fun setVisualSensitivity(value: Float) {
+        val sensitivity = value.coerceIn(0f, MAX_VISUAL_SENSITIVITY)
+        visualSensitivityInternal.value = sensitivity
+        settingsMutex.withLock {
+            settings.update { current -> current.copy(visualSensitivity = sensitivity) }
+        }
+    }
+
+    private fun applyVoice(current: AppSettings) {
+        synthesizer.applyVoice(current.voiceRate, current.voiceVolume, current.languageTag)
+        speechInput.setLanguageTag(current.languageTag)
+        liveSpeech.setLanguageTag(current.languageTag)
     }
 
     /**
@@ -889,10 +986,7 @@ class MainViewModel(
                 }
             } ?: return
             if (chatGeneration.get() != generation || !ownsTurn(turnId)) return
-            val persona = AssistantPersona(
-                name = current.personaName,
-                personality = current.personality,
-            )
+            val persona = resolvedPersona(current.personaName, current.personality)
             val facts = rememberedFacts(memory.isEnabled(), memory.list())
             gemini.streamReply(
                 AIRequest(
@@ -1072,6 +1166,10 @@ class MainViewModel(
         }
     }
 }
+
+private const val MIN_VOICE_RATE = 0.25f
+private const val MAX_VOICE_RATE = 2f
+private const val MAX_VISUAL_SENSITIVITY = 4f
 
 internal const val DEMO_LISTEN_MILLIS = 1_500L
 internal const val DEMO_THINK_MILLIS = 1_200L

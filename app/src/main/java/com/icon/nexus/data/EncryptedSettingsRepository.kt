@@ -15,9 +15,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 
 /**
- * Stores the API key, Gemini model, provider, persona, voice rate, theme,
- * demo mode, and transcript flag in [EncryptedSharedPreferences]. The API key
- * defaults to empty; nothing in source supplies a credential.
+ * Stores settings in [EncryptedSharedPreferences], including the Gemini API
+ * key. The key defaults to empty; nothing in source supplies a credential.
+ * Voice rate, volume, language, and visual sensitivity are stored here too.
  */
 class EncryptedSettingsRepository(
     context: Context,
@@ -43,9 +43,12 @@ class EncryptedSettingsRepository(
                 .putString(SettingsKeys.PERSONA_NAME, next.personaName)
                 .putString(SettingsKeys.PERSONALITY, next.personality)
                 .putFloat(SettingsKeys.VOICE_RATE, next.voiceRate)
+                .putFloat(SettingsKeys.VOICE_VOLUME, next.voiceVolume)
+                .putString(SettingsKeys.LANGUAGE_TAG, next.languageTag)
                 .putString(SettingsKeys.THEME, next.theme.name)
                 .putBoolean(SettingsKeys.DEMO_MODE, next.demoMode)
                 .putBoolean(SettingsKeys.SHOW_TRANSCRIPT, next.showTranscript)
+                .putFloat(SettingsKeys.VISUAL_SENSITIVITY, next.visualSensitivity)
                 .commit()
             state.value = next
         }
@@ -65,11 +68,18 @@ class EncryptedSettingsRepository(
             personality = preferences.getString(SettingsKeys.PERSONALITY, defaults.personality)
                 ?: defaults.personality,
             voiceRate = preferences.getFloat(SettingsKeys.VOICE_RATE, defaults.voiceRate),
+            voiceVolume = preferences.getFloat(SettingsKeys.VOICE_VOLUME, defaults.voiceVolume),
+            languageTag = preferences.getString(SettingsKeys.LANGUAGE_TAG, defaults.languageTag)
+                ?: defaults.languageTag,
             theme = themeOrDefault(preferences.getString(SettingsKeys.THEME, defaults.theme.name)),
             demoMode = preferences.getBoolean(SettingsKeys.DEMO_MODE, defaults.demoMode),
             showTranscript = preferences.getBoolean(
                 SettingsKeys.SHOW_TRANSCRIPT,
                 defaults.showTranscript,
+            ),
+            visualSensitivity = preferences.getFloat(
+                SettingsKeys.VISUAL_SENSITIVITY,
+                defaults.visualSensitivity,
             ),
         )
     }

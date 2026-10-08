@@ -13,6 +13,8 @@ interface SpeechInput {
 
     fun stopListening()
 
+    fun setLanguageTag(tag: String) {}
+
     fun setListener(listener: SpeechEventListener?) {}
 }
 

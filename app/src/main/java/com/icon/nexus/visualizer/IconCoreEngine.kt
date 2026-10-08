@@ -297,6 +297,7 @@ fun IconCoreScene(
     themeId: VisualThemeId = VisualThemeId.Core,
     tour: CameraTour? = null,
     returning: Boolean = false,
+    sensitivity: Float = 1f,
 ) {
     val engine = remember { IconCoreEngine() }
     val planner = remember { ShotPlanner() }
@@ -310,7 +311,7 @@ fun IconCoreScene(
         }
     }
     Canvas(modifier = modifier) {
-        engine.submitAmplitude(audioLevel)
+        engine.submitAmplitude(visualLevel(audioLevel, sensitivity))
         engine.draw(
             canvas = drawContext.canvas.nativeCanvas,
             width = size.width,

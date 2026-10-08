@@ -13,6 +13,13 @@ fun IconNavHost(viewModel: MainViewModel) {
         composable("main") {
             MainScreen(
                 viewModel = viewModel,
+                onOpenSettings = { navController.navigate("settings") },
+            )
+        }
+        composable("settings") {
+            SettingsScreen(
+                viewModel = viewModel,
+                onBack = { navController.popBackStack() },
                 onOpenMemory = { navController.navigate("memory") },
             )
         }

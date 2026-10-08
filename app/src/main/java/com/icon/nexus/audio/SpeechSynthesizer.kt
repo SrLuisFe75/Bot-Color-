@@ -11,6 +11,8 @@ interface SpeechSynthesizer {
 
     fun enqueue(turnId: Long, sentences: List<String>)
 
+    fun applyVoice(rate: Float, volume: Float, languageTag: String) {}
+
     fun stop()
 
     fun setPlaybackListener(listener: SpeechPlaybackListener?) {}

@@ -1,5 +1,6 @@
 package com.icon.nexus.ai
 
+import com.icon.nexus.domain.resolvedPersona
 import java.io.IOException
 import java.io.InterruptedIOException
 import java.net.SocketTimeoutException
@@ -19,8 +20,9 @@ internal fun geminiSystemInstruction(
     personality: String,
     memories: List<String> = emptyList(),
 ): String {
-    val resolvedName = name.trim().ifEmpty { "ICON" }
-    val trait = personality.trim()
+    val persona = resolvedPersona(name, personality)
+    val resolvedName = persona.name
+    val trait = persona.personality
     val facts = memories.map { it.trim() }.filter { it.isNotEmpty() }
     return buildString {
         append("Your name is ")

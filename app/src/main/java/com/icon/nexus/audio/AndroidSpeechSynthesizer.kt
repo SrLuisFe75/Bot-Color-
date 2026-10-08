@@ -7,12 +7,12 @@ import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import java.util.LinkedHashMap
-import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Android [TextToSpeech] on the application context. Sentences are queued
- * with [TextToSpeech.QUEUE_ADD] at speech rate 1.0 in the system locale.
+ * with [TextToSpeech.QUEUE_ADD]. Rate, volume, and language come from
+ * [applyVoice]. A blank language tag keeps the system locale.
  * [stop] halts playback immediately and drops anything not yet spoken.
  */
 class AndroidSpeechSynthesizer(
@@ -28,6 +28,9 @@ class AndroidSpeechSynthesizer(
     private var ready = false
     private var failed = false
     private var epoch = 0
+    private var speechRate = 1f
+    private var speechVolume = 1f
+    private var languageTag = ""
 
     override val available: Boolean
         get() = !failed
@@ -38,6 +41,18 @@ class AndroidSpeechSynthesizer(
 
     override fun setPlaybackListener(listener: SpeechPlaybackListener?) {
         this.listener = listener
+    }
+
+    override fun applyVoice(rate: Float, volume: Float, languageTag: String) {
+        onMain {
+            speechRate = rate.coerceIn(MIN_RATE, MAX_RATE)
+            speechVolume = volume.coerceIn(0f, 1f)
+            this.languageTag = languageTag.trim()
+            val current = engine ?: return@onMain
+            if (!ready || failed) return@onMain
+            current.setSpeechRate(speechRate)
+            applyLanguage(current)
+        }
     }
 
     override fun enqueue(turnId: Long, sentences: List<String>) {
@@ -101,14 +116,21 @@ class AndroidSpeechSynthesizer(
             return
         }
         current.setOnUtteranceProgressListener(progressListener())
-        current.setSpeechRate(SPEECH_RATE)
-        val language = current.setLanguage(Locale.getDefault())
-        if (language == TextToSpeech.LANG_MISSING_DATA || language == TextToSpeech.LANG_NOT_SUPPORTED) {
+        current.setSpeechRate(speechRate)
+        if (!applyLanguage(current)) {
             fail()
             return
         }
         ready = true
         drain()
+    }
+
+    private fun applyLanguage(current: TextToSpeech): Boolean {
+        var result = current.setLanguage(ttsLanguage(languageTag))
+        if (languageTag.isNotBlank() && !languageAvailable(result)) {
+            result = current.setLanguage(ttsLanguage(""))
+        }
+        return languageAvailable(result)
     }
 
     private fun drain() {
@@ -119,8 +141,10 @@ class AndroidSpeechSynthesizer(
             val (turnId, sentence) = waiting.removeFirst()
             val utteranceId = "icon-$turnId-${utteranceIds.incrementAndGet()}"
             active[utteranceId] = Utterance(turnId = turnId, epoch = spokenEpoch)
+            val params = Bundle()
+            params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, speechVolume)
             val result = try {
-                current.speak(sentence, TextToSpeech.QUEUE_ADD, Bundle(), utteranceId)
+                current.speak(sentence, TextToSpeech.QUEUE_ADD, params, utteranceId)
             } catch (_: RuntimeException) {
                 TextToSpeech.ERROR
             }
@@ -206,6 +230,12 @@ class AndroidSpeechSynthesizer(
     )
 
     private companion object {
-        const val SPEECH_RATE = 1.0f
+        const val MIN_RATE = 0.25f
+        const val MAX_RATE = 2f
+
+        fun languageAvailable(result: Int): Boolean {
+            return result != TextToSpeech.LANG_MISSING_DATA &&
+                result != TextToSpeech.LANG_NOT_SUPPORTED
+        }
     }
 }
