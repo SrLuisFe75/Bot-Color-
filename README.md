@@ -34,6 +34,10 @@ One-shot speech recognition when demo mode is off. The mic asks for the micropho
 
 Android text-to-speech when demo mode is off. Gemini sentences are queued as they finish, and the first sentence moves the app to Speaking. The timed demo still uses its simulated voice level and does not speak the script.
 
+## Phase 8
+
+One `AppState` flow drives speech, Gemini, text-to-speech, the transcript, and the presence. Exceptional failures enter Alert with the existing message, then return to Idle. The timed demo, including the Idle long-press Alert preview, is unchanged.
+
 Cinematic playback is a later phase.
 
 ## Build

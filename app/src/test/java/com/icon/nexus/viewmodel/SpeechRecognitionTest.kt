@@ -57,7 +57,7 @@ class SpeechRecognitionTest {
     }
 
     @Test
-    fun permissionDeniedStaysIdle() {
+    fun permissionDeniedEntersAlert() {
         val speech = FakeSpeechInput()
         val viewModel = speechViewModel(speech = speech, granted = false)
         viewModel.onMicClicked()
@@ -73,15 +73,15 @@ class SpeechRecognitionTest {
 
         viewModel.onMicrophonePermissionResult(false)
 
-        assertEquals(AppState.Idle, viewModel.appState.value)
-        assertEquals(SpeechMessages.PERMISSION, viewModel.chatError.value)
+        val alert = viewModel.appState.value as AppState.Alert
+        assertEquals(SpeechMessages.PERMISSION, alert.message)
         assertFalse(viewModel.microphoneExplanation.value)
         assertFalse(speech.isActive)
-        assertEquals("Ready", statusLabel(viewModel.appState.value))
+        assertEquals("Alert", statusLabel(viewModel.appState.value))
     }
 
     @Test
-    fun emptyResultReturnsToIdleWithoutCallingGemini() {
+    fun emptyResultEntersAlertWithoutCallingGemini() {
         val speech = FakeSpeechInput()
         var calls = 0
         val viewModel = speechViewModel(
@@ -98,8 +98,8 @@ class SpeechRecognitionTest {
         val listening = viewModel.appState.value as AppState.Listening
         speech.emitResult(listening.turnId, "   ")
 
-        assertEquals(AppState.Idle, viewModel.appState.value)
-        assertEquals(SpeechMessages.EMPTY, viewModel.chatError.value)
+        val alert = viewModel.appState.value as AppState.Alert
+        assertEquals(SpeechMessages.EMPTY, alert.message)
         assertEquals("", viewModel.userLine.value)
         assertEquals(0, calls)
         assertFalse(speech.isActive)
@@ -107,7 +107,7 @@ class SpeechRecognitionTest {
     }
 
     @Test
-    fun recognizerErrorsReturnToIdle() {
+    fun recognizerErrorsEnterAlert() {
         assertEquals(SpeechMessages.EMPTY, leaveWith(SpeechFailure.NoMatch))
         assertEquals(SpeechMessages.BUSY, leaveWith(SpeechFailure.Busy))
         assertEquals(SpeechMessages.NETWORK, leaveWith(SpeechFailure.Network))
@@ -138,7 +138,6 @@ class SpeechRecognitionTest {
         assertEquals(second, viewModel.appState.value)
         assertEquals("", viewModel.userLine.value)
         assertEquals("", viewModel.iconLine.value)
-        assertEquals(null, viewModel.chatError.value)
         assertTrue(speech.isActive)
     }
 
@@ -166,7 +165,6 @@ class SpeechRecognitionTest {
         viewModel.onMicClicked()
         assertEquals(AppState.Idle, viewModel.appState.value)
         assertFalse(speech.isActive)
-        assertEquals(null, viewModel.chatError.value)
     }
 
     @Test
@@ -250,7 +248,6 @@ class SpeechRecognitionTest {
                 viewModel.appState.value == AppState.Idle && viewModel.iconLine.value == "On it."
             }
             assertEquals("What time is it", viewModel.userLine.value)
-            assertEquals(null, viewModel.chatError.value)
             assertFalse(speech.isActive)
             val body = server.takeRequest().body.readUtf8()
             assertTrue(body.contains("What time is it"))
@@ -265,9 +262,9 @@ class SpeechRecognitionTest {
         viewModel.onMicClicked()
         val listening = viewModel.appState.value as AppState.Listening
         speech.emitFailure(listening.turnId, reason)
-        assertEquals(AppState.Idle, viewModel.appState.value)
+        val alert = viewModel.appState.value as AppState.Alert
         assertFalse(speech.isActive)
-        return viewModel.chatError.value.orEmpty()
+        return alert.message
     }
 
     private fun speechViewModel(

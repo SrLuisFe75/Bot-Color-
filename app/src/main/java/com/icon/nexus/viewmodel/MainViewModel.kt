@@ -58,6 +58,10 @@ import kotlin.math.min
  * Android text-to-speech, then the app returns to Idle. Demo mode keeps the
  * timed local timeline and does not speak those sentences.
  *
+ * [appState] is the only phase SpeechInput, Gemini, text-to-speech, the
+ * transcript, and the presence follow. Exceptional failures enter Alert
+ * with their message, then return to Idle.
+ *
  * [onAppBackgrounded] is the background hook. The activity calls it from
  * `onStop` so leaving the foreground returns the app to Idle and cancels
  * an in-flight Gemini call.
@@ -108,17 +112,14 @@ class MainViewModel(
     private val geminiModelInternal = MutableStateFlow(initialSettings.geminiModel)
     val geminiModel: StateFlow<String> = geminiModelInternal.asStateFlow()
 
-    private val chatErrorInternal = MutableStateFlow<String?>(null)
-    val chatError: StateFlow<String?> = chatErrorInternal.asStateFlow()
-
     private val microphoneExplanationInternal = MutableStateFlow(false)
     val microphoneExplanation: StateFlow<Boolean> = microphoneExplanationInternal.asStateFlow()
 
     private var speechTurnId: Long? = null
     private var pendingUtterances = 0
     private var replyFinished = false
-    private var speechUnavailable = false
     private val sentenceBuffer = StringBuilder()
+    private var alertJob: Job? = null
 
     init {
         liveSpeech.setListener { event -> onSpeechEvent(event) }
@@ -199,6 +200,7 @@ class MainViewModel(
     fun onAppBackgrounded(): Result<AppState> {
         stopDemoWork()
         cancelChat()
+        cancelAlertTimer()
         abandonSpeech()
         microphoneExplanationInternal.value = false
         liveSpeech.stopListening()
@@ -228,10 +230,7 @@ class MainViewModel(
         microphoneExplanationInternal.value = false
         if (demoModeInternal.value) return
         if (!granted) {
-            if (appStateInternal.value is AppState.Listening) {
-                dispatch(StateTransition.ToIdle)
-            }
-            chatErrorInternal.value = SpeechMessages.PERMISSION
+            enterAlert(SpeechMessages.PERMISSION)
             return
         }
         if (appStateInternal.value is AppState.Idle) {
@@ -256,7 +255,6 @@ class MainViewModel(
         cancelChat()
         userLineInternal.value = ""
         iconLineInternal.value = ""
-        chatErrorInternal.value = null
         if (appStateInternal.value !is AppState.Idle) {
             dispatch(StateTransition.ToIdle)
         }
@@ -325,6 +323,9 @@ class MainViewModel(
         }
         val result = machine.transition(target)
         result.onSuccess { next ->
+            if (current is AppState.Alert && next !is AppState.Alert) {
+                cancelAlertTimer()
+            }
             when (next) {
                 is AppState.Thinking -> if (demoModeInternal.value) {
                     userLineInternal.value = demoTranscript[scriptIndex].first
@@ -424,11 +425,9 @@ class MainViewModel(
 
     private fun requestLiveListening() {
         if (microphone.isGranted()) {
-            chatErrorInternal.value = null
             dispatch(StateTransition.ToListening)
             return
         }
-        chatErrorInternal.value = null
         microphoneExplanationInternal.value = true
     }
 
@@ -442,8 +441,17 @@ class MainViewModel(
             microphoneExplanationInternal.value = true
             return
         }
-        chatErrorInternal.value = null
         dispatch(StateTransition.ToListening)
+    }
+
+    /**
+     * Alert is not sticky. A tap on the presence leaves it immediately.
+     * The failure timer does the same after [FAILURE_ALERT_MILLIS].
+     */
+    fun onPresenceTapped() {
+        if (appStateInternal.value !is AppState.Alert) return
+        cancelAlertTimer()
+        dispatch(StateTransition.ToIdle)
     }
 
     private fun onSpeechEvent(event: SpeechEvent) {
@@ -454,20 +462,15 @@ class MainViewModel(
             is SpeechEvent.Result -> {
                 val text = event.text.trim()
                 if (text.isEmpty()) {
-                    chatErrorInternal.value = SpeechMessages.EMPTY
-                    dispatch(StateTransition.ToIdle)
+                    enterAlert(SpeechMessages.EMPTY)
                 } else {
-                    chatErrorInternal.value = null
                     val generation = beginChatTurn()
                     chatJob = viewModelScope.launch {
                         runChatTurn(generation, text)
                     }
                 }
             }
-            is SpeechEvent.Failure -> {
-                chatErrorInternal.value = speechErrorMessage(event.reason)
-                dispatch(StateTransition.ToIdle)
-            }
+            is SpeechEvent.Failure -> enterAlert(speechErrorMessage(event.reason))
         }
     }
 
@@ -493,12 +496,11 @@ class MainViewModel(
         speechTurnId = turnId
         pendingUtterances = 0
         replyFinished = false
-        speechUnavailable = false
         sentenceBuffer.clear()
     }
 
     private fun absorbSpeech(turnId: Long, chunk: String) {
-        if (demoModeInternal.value || speechUnavailable || turnId != speechTurnId) return
+        if (demoModeInternal.value || turnId != speechTurnId) return
         sentenceBuffer.append(chunk)
         val split = splitCompletedSentences(sentenceBuffer.toString())
         sentenceBuffer.clear()
@@ -507,7 +509,7 @@ class MainViewModel(
     }
 
     private fun flushSpeech(turnId: Long) {
-        if (demoModeInternal.value || speechUnavailable || turnId != speechTurnId) return
+        if (demoModeInternal.value || turnId != speechTurnId) return
         val tail = sentenceBuffer.toString().trim()
         sentenceBuffer.clear()
         if (tail.any { it.isLetterOrDigit() }) {
@@ -516,7 +518,7 @@ class MainViewModel(
     }
 
     private fun queueSentences(turnId: Long, sentences: List<String>) {
-        if (sentences.isEmpty() || turnId != speechTurnId || speechUnavailable) return
+        if (sentences.isEmpty() || turnId != speechTurnId) return
         if (!synthesizer.available) {
             markSpeechUnavailable(turnId)
             return
@@ -529,15 +531,8 @@ class MainViewModel(
     }
 
     private fun markSpeechUnavailable(turnId: Long) {
-        speechUnavailable = true
-        pendingUtterances = 0
-        sentenceBuffer.clear()
-        synthesizer.stop()
-        chatErrorInternal.value = SpeechMessages.UNAVAILABLE
-        if (turnId == speechTurnId && appStateInternal.value is AppState.Speaking && ownsTurn(turnId)) {
-            speechTurnId = null
-            dispatch(StateTransition.ToIdle)
-        }
+        if (turnId != speechTurnId) return
+        enterAlert(SpeechMessages.UNAVAILABLE)
     }
 
     private fun onSpeechFinished(turnId: Long) {
@@ -567,6 +562,29 @@ class MainViewModel(
         synthesizer.stop()
     }
 
+    /**
+     * Leaves Listening, Thinking, or Speaking for Alert. The message lives
+     * on [AppState.Alert] so the presence and the transcript read one state.
+     * A tap or [FAILURE_ALERT_MILLIS] returns to Idle.
+     */
+    private fun enterAlert(message: String) {
+        if (appStateInternal.value is AppState.Alert) return
+        abandonSpeech()
+        if (dispatch(StateTransition.ToAlert(message)).isFailure) return
+        cancelAlertTimer()
+        alertJob = viewModelScope.launch {
+            delay(FAILURE_ALERT_MILLIS)
+            if (appStateInternal.value is AppState.Alert) {
+                dispatch(StateTransition.ToIdle)
+            }
+        }
+    }
+
+    private fun cancelAlertTimer() {
+        alertJob?.cancel()
+        alertJob = null
+    }
+
     private fun beginChatTurn(): Int {
         val generation = chatGeneration.incrementAndGet()
         chatJob?.cancel()
@@ -591,12 +609,11 @@ class MainViewModel(
         beginReplySpeech(turnId)
         userLineInternal.value = text
         iconLineInternal.value = ""
-        chatErrorInternal.value = null
         try {
             val current = settings.get()
             if (chatGeneration.get() != generation || !ownsTurn(turnId)) return
             if (current.apiKey.isBlank()) {
-                chatErrorInternal.value = GeminiMessages.BLANK_KEY
+                enterAlert(GeminiMessages.BLANK_KEY)
                 return
             }
             val history = conversationMutex.withLock {
@@ -638,25 +655,17 @@ class MainViewModel(
                         absorbSpeech(turnId, event.text)
                     }
                     is AIEvent.Failed -> {
-                        chatErrorInternal.value = event.message.ifBlank { GeminiMessages.EMPTY }
-                        replyFinished = true
-                        pendingUtterances = 0
-                        sentenceBuffer.clear()
-                        synthesizer.stop()
-                        if (appStateInternal.value is AppState.Speaking && ownsTurn(turnId)) {
-                            speechTurnId = null
-                            dispatch(StateTransition.ToIdle)
-                        }
+                        enterAlert(event.message.ifBlank { GeminiMessages.EMPTY })
                     }
                     is AIEvent.Completed -> {
                         val reply = iconLineInternal.value.trim()
                         if (reply.isEmpty()) {
-                            chatErrorInternal.value = GeminiMessages.EMPTY
-                        } else {
-                            if (!speechUnavailable) chatErrorInternal.value = null
-                            saveAssistant(generation, turnId, reply)
-                            flushSpeech(turnId)
+                            enterAlert(GeminiMessages.EMPTY)
+                            return@collect
                         }
+                        saveAssistant(generation, turnId, reply)
+                        flushSpeech(turnId)
+                        if (appStateInternal.value is AppState.Alert) return@collect
                         replyFinished = true
                         maybeFinishSpeech(turnId)
                     }
@@ -666,7 +675,7 @@ class MainViewModel(
             throw cancelled
         } catch (_: Throwable) {
             if (chatGeneration.get() == generation && ownsTurn(turnId)) {
-                chatErrorInternal.value = GeminiMessages.OFFLINE
+                enterAlert(GeminiMessages.OFFLINE)
             }
         } finally {
             if (
@@ -761,6 +770,7 @@ class MainViewModel(
 internal const val DEMO_LISTEN_MILLIS = 1_500L
 internal const val DEMO_THINK_MILLIS = 1_200L
 internal const val DEMO_ALERT_MILLIS = 2_000L
+internal const val FAILURE_ALERT_MILLIS = 2_500L
 internal const val DEMO_LEVEL_FRAME_MILLIS = 40L
 
 internal fun speakingMillis(sentence: String): Long {

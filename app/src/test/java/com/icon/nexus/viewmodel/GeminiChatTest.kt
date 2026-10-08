@@ -69,20 +69,19 @@ class GeminiChatTest {
     }
 
     @Test
-    fun blankKeyMakesNoRequestAndReturnsToIdle() = runBlocking {
+    fun blankKeyMakesNoRequestAndEntersAlert() = runBlocking {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val server = MockWebServer()
         server.start()
         try {
             val viewModel = chatViewModel(server = server, apiKey = "   ")
             viewModel.sendText("Hello")
-            awaitCondition {
-                viewModel.appState.value == AppState.Idle && viewModel.chatError.value != null
-            }
+            awaitCondition { viewModel.appState.value is AppState.Alert }
             assertEquals(0, server.requestCount)
-            assertEquals(GeminiMessages.BLANK_KEY, viewModel.chatError.value)
+            val alert = viewModel.appState.value as AppState.Alert
+            assertEquals(GeminiMessages.BLANK_KEY, alert.message)
             assertEquals("Hello", viewModel.userLine.value)
-            assertEquals("Ready", statusLabel(viewModel.appState.value))
+            assertEquals("Alert", statusLabel(viewModel.appState.value))
         } finally {
             server.shutdown()
         }
@@ -114,7 +113,6 @@ class GeminiChatTest {
                 viewModel.appState.value == AppState.Idle && viewModel.iconLine.value == "Hello there."
             }
             assertEquals("Hello there.", viewModel.iconLine.value)
-            assertEquals(null, viewModel.chatError.value)
             assertEquals("Ready", statusLabel(viewModel.appState.value))
         } finally {
             release.countDown()
@@ -123,7 +121,7 @@ class GeminiChatTest {
     }
 
     @Test
-    fun unauthorizedAndRateLimitReturnToIdleWithMessages() = runBlocking {
+    fun unauthorizedAndRateLimitEnterAlertWithMessages() = runBlocking {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         assertEquals(GeminiMessages.INVALID_KEY, chatHttpError(401))
         assertEquals(GeminiMessages.RATE_LIMIT, chatHttpError(429))
@@ -223,7 +221,6 @@ class GeminiChatTest {
             viewModel.newConversation()
             assertEquals("", viewModel.userLine.value)
             assertEquals("", viewModel.iconLine.value)
-            assertEquals(null, viewModel.chatError.value)
             assertEquals(AppState.Idle, viewModel.appState.value)
             viewModel.sendText("hello two")
             awaitCondition { viewModel.iconLine.value == "Second reply." }
@@ -243,12 +240,10 @@ class GeminiChatTest {
         try {
             val viewModel = chatViewModel(server = server, apiKey = "secret-test-key")
             viewModel.sendText("Hi")
-            awaitCondition {
-                viewModel.appState.value == AppState.Idle && viewModel.chatError.value != null
-            }
-            assertEquals(AppState.Idle, viewModel.appState.value)
-            assertFalse(viewModel.chatError.value!!.contains("secret-test-key"))
-            return viewModel.chatError.value!!
+            awaitCondition { viewModel.appState.value is AppState.Alert }
+            val alert = viewModel.appState.value as AppState.Alert
+            assertFalse(alert.message.contains("secret-test-key"))
+            return alert.message
         } finally {
             server.shutdown()
         }

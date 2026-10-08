@@ -94,17 +94,17 @@ class TtsPlaybackTest {
     }
 
     @Test
-    fun unavailableSpeechReachesIdleWithTheText() = runBlocking {
+    fun unavailableSpeechEntersAlertWithTheText() = runBlocking {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val synth = FakeSynthesizer(usable = false)
         val viewModel = speechViewModel(synth = synth, gemini = scripted("Hello there."))
         viewModel.sendText("Hi")
 
-        assertEquals(AppState.Idle, viewModel.appState.value)
+        val alert = viewModel.appState.value as AppState.Alert
+        assertEquals(SpeechMessages.UNAVAILABLE, alert.message)
         assertEquals("Hello there.", viewModel.iconLine.value)
-        assertEquals(SpeechMessages.UNAVAILABLE, viewModel.chatError.value)
         assertTrue(synth.spoken.isEmpty())
-        assertEquals("Ready", statusLabel(viewModel.appState.value))
+        assertEquals("Alert", statusLabel(viewModel.appState.value))
     }
 
     @Test

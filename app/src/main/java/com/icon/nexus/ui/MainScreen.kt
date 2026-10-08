@@ -59,7 +59,6 @@ fun MainScreen(viewModel: MainViewModel) {
     val audioLevel by viewModel.audioLevel.collectAsStateWithLifecycle()
     val demoMode by viewModel.demoMode.collectAsStateWithLifecycle()
     val transcriptStartsVisible by viewModel.transcriptStartsVisible.collectAsStateWithLifecycle()
-    val chatError by viewModel.chatError.collectAsStateWithLifecycle()
     val apiKey by viewModel.apiKey.collectAsStateWithLifecycle()
     val geminiModel by viewModel.geminiModel.collectAsStateWithLifecycle()
     val microphoneExplanation by viewModel.microphoneExplanation.collectAsStateWithLifecycle()
@@ -69,7 +68,9 @@ fun MainScreen(viewModel: MainViewModel) {
         viewModel.onMicrophonePermissionResult(granted)
     }
     val scope = rememberCoroutineScope()
+    val presenceInteraction = remember { MutableInteractionSource() }
     var settingsOpen by remember { mutableStateOf(false) }
+    val alertMessage = (state as? AppState.Alert)?.message
     val statusColor = if (state is AppState.Alert) {
         MaterialTheme.colorScheme.tertiary
     } else {
@@ -84,7 +85,21 @@ fun MainScreen(viewModel: MainViewModel) {
         IconPresence(
             state = state,
             audioLevel = audioLevel,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .then(
+                    if (state is AppState.Alert) {
+                        Modifier
+                            .clickable(
+                                interactionSource = presenceInteraction,
+                                indication = null,
+                                onClick = viewModel::onPresenceTapped,
+                            )
+                            .semantics { contentDescription = "Presence" }
+                    } else {
+                        Modifier
+                    },
+                ),
         )
         if (chromeVisible) {
             Column(
@@ -108,9 +123,9 @@ fun MainScreen(viewModel: MainViewModel) {
                     color = statusColor,
                     textAlign = TextAlign.Center,
                 )
-                if (!demoMode && !chatError.isNullOrBlank()) {
+                if (!demoMode && !alertMessage.isNullOrBlank()) {
                     Text(
-                        text = chatError.orEmpty(),
+                        text = alertMessage,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.tertiary,
                         textAlign = TextAlign.Center,
@@ -162,7 +177,12 @@ fun MainScreen(viewModel: MainViewModel) {
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
-                        onClick = viewModel::showChrome,
+                        onClick = {
+                            if (state is AppState.Alert) {
+                                viewModel.onPresenceTapped()
+                            }
+                            viewModel.showChrome()
+                        },
                     )
                     .semantics { contentDescription = "Show controls" },
             )
