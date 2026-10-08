@@ -105,6 +105,87 @@ No emulator is installed in this environment, so the debug APK was not installed
 
 The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 
+## Guía de usuario
+
+ICON es una app nativa. No usa WebView. La primera apertura muestra una introducción corta; Skip o Meet ICON la terminan y no vuelve a aparecer. Negar el micrófono no impide terminar.
+
+### Arquitectura
+
+Kotlin y Jetpack Compose, con un solo `MainViewModel` (MVVM). Un `StateFlow` de `AppState` es la fase que leen el habla, Gemini, la síntesis, la transcripción y la presencia: Idle, Listening, Thinking, Speaking y Alert. Entrar en Listening o Thinking asigna un `turnId` nuevo. Speaking conserva el `turnId` de Thinking. Un turno viejo no cambia el estado.
+
+Los límites son interfaces. `AIProvider` es el único borde del modelo (`DemoProvider` o `GeminiProvider`). `SpeechInput` escucha una frase. `SpeechSynthesizer` habla y se puede detener. `AudioAnalyzer` suaviza el nivel (ataque 0,62, relajación 0,12). `VisualizerTheme` nombra la escena. El historial de chat vive en Room (`icon-conversations.db`). La memoria optativa vive en otra base (`icon-memory.db`) y no comparte tablas con el chat.
+
+### Dependencias
+
+Compose (Material 3 y Navigation), Room, OkHttp, `androidx.security:security-crypto`, el TTS de Android, `SpeechRecognizer` y `android.media.audiofx.Visualizer`. No hay WebView.
+
+### Configuración
+
+La clave de Gemini se guarda cifrada en el dispositivo, en `icon_secure_settings`, con `EncryptedSharedPreferences`. No está en el código ni en la URL. El modelo por defecto es `gemini-2.5-flash`. La petición la envía en la cabecera `x-goog-api-key`. Demo no necesita clave y no llama a Gemini.
+
+En Settings, categoría AI: Demo o Gemini, el modelo y el campo enmascarado Gemini API key.
+
+### Compilación
+
+```bash
+./gradlew :app:assembleDebug
+```
+
+El APK de depuración queda en `app/build/outputs/apk/debug/app-debug.apk`.
+
+### Release
+
+La firma de release es local. No subas el almacén ni las contraseñas. Crea una clave en tu máquina:
+
+```bash
+keytool -genkeypair -v -keystore icon-release.jks -alias icon -keyalg RSA -keysize 2048 -validity 10000
+```
+
+En la raíz del repositorio, un archivo `keystore.properties` (está en `.gitignore`, igual que `*.jks` y `*.keystore`):
+
+```properties
+storeFile=icon-release.jks
+storePassword=TU_CONTRASEÑA_DEL_ALMACÉN
+keyAlias=icon
+keyPassword=TU_CONTRASEÑA_DE_LA_CLAVE
+```
+
+`storeFile` es relativo a la raíz del proyecto. Con ese archivo, `./gradlew :app:assembleRelease` firma el APK y lo escribe en `app/build/outputs/apk/release/app-release.apk`. Sin ese archivo, `./gradlew :app:assembleDebug` sigue funcionando. No hace falta una clave para depurar.
+
+### Instalación
+
+Hace falta un dispositivo o un emulador. Este entorno no instaló el APK.
+
+```bash
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+### Uso
+
+Con Demo, un toque en Mic recorre Listening, Thinking y Speaking con una frase fija y vuelve a Ready. Una pulsación larga en Idle muestra Alert un momento. Una pulsación larga en Speaking interrumpe ese turno y pasa a Listening.
+
+Con Gemini, Mic abre el micrófono para una sola frase. La marca Live aparece solo junto a Listening. Al terminar, al cancelar o al ir la app a segundo plano, el micrófono se cierra. Un segundo toque en Listening vuelve a Idle. Durante Thinking o Speaking el toque corto no abre el micrófono; la pulsación larga cancela el turno y solo entonces escucha. La respuesta se parte en frases y la dice el TTS de Android.
+
+Conversation, en Demo, muestra u oculta la transcripción. Fuera de Demo abre la lista de hilos: la primera línea y la hora, tocar para seguir, Delete para borrar. New conversation deja un hilo vacío y no borra el anterior. Borrar el hilo abierto crea uno nuevo vacío. Las sesiones Demo no se guardan.
+
+Cinematic mueve la cámara sobre ICON CORE unos 30 segundos. El núcleo sigue reaccionando. Se ocultan el estado, el micrófono y el resto de controles; Cinematic se queda. Un segundo toque, o un toque en el campo, vuelve con suavidad y restituye los controles.
+
+Memory, desde Settings, tiene el interruptor “Remember what I ask you to keep.” Empieza apagado. Los hechos se escriben ahí; no se extraen del chat. Solo si está encendido viajan en la instrucción de Gemini.
+
+Delete local data, en PRIVACY, pide confirmación. Borra las conversaciones y las memorias, limpia la clave y deja un hilo vacío. Demo y la introducción ya completada se quedan.
+
+### Cambiar proveedor, voz y visualizador
+
+Proveedor: Settings, AI, Demo o Gemini. Demo usa la línea de tiempo local. Gemini usa la clave y el modelo de esa pantalla.
+
+Voz: Settings, VOICE. Speech rate (0,25 a 2), Volume (0 a 1) y Language. Un idioma vacío usa el del dispositivo. Sirven para el TTS y para el reconocedor.
+
+Visualizador: solo ICON CORE dibuja la escena. En VISUAL se lee “ICON CORE”; Visual sensitivity escala el nivel de voz, y Show conversation decide si la transcripción empieza visible. Los identificadores `Nexus`, `Aurora` y `Ember` existen, pero `VisualizerThemes.forId` los resuelve todos a `IconCoreTheme`. No hay un segundo renderizador. Para añadir otro tema haría falta un objeto que implemente `VisualizerTheme` y devolverlo desde `forId` para ese `VisualThemeId`, y dibujarlo en el motor. Hoy el motor dibuja ICON CORE.
+
+### Privacidad
+
+La pantalla Settings, categoría PRIVACY, dice qué queda en el aparato, qué sale en una petición a Gemini, que el reconocimiento puede usar la red, y que la síntesis y el visualizador no salen del dispositivo. Delete local data está en esa misma categoría.
+
 ## Hair Color Mixing Telegram Bot
 
 Bot de Telegram para buscar y mezclar colores profesionales de cabello (Igora, Wella, L'Oréal), guardar favoritos y ver previsualizaciones.
